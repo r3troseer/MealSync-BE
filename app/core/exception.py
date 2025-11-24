@@ -1,6 +1,6 @@
 from fastapi import HTTPException
 from typing import Any, Optional
-from schema.result import ErrorCategory
+from ..schemas.result import ErrorCategory
 
 
 class CustomException(HTTPException):

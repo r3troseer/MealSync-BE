@@ -1,38 +1,55 @@
-from sqlalchemy import Column, String, Boolean, Integer, Table, ForeignKey
-from sqlalchemy.orm import relationship
-from models.baseModel import Base
+from sqlalchemy import String, Boolean
+from sqlalchemy.orm import relationship, Mapped, mapped_column
+from typing import Optional, List, TYPE_CHECKING
+from app.models.base import BaseModel
+from app.models.associations import user_household
+if TYPE_CHECKING:
+    from app.models.household import Household
+    from app.models.meal import Meal
+    from app.models.recipe import Recipe
 
-user_household = Table(
-    'user_household',
-    Base.metadata,
-    Column('user_id', Integer, ForeignKey('users.id', ondelete='CASCADE')),
-    Column('household_id', Integer, ForeignKey('households.id', ondelete='CASCADE'))
-)
+
+# user_household = Table(
+#     'user_household',
+#     Base.metadata,
+#     Column('user_id', Integer, ForeignKey('users.id', ondelete='CASCADE')),
+#     Column('household_id', Integer, ForeignKey('households.id', ondelete='CASCADE'))
+# )
 
 
-class User(Base):
+class User(BaseModel):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, unique=True, index=True, nullable=False)
-    username = Column(String, unique=True, index=True, nullable=False)
-    hashed_password = Column(String, nullable=False)
-    full_name = Column(String, nullable=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    username: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+    hashed_password: Mapped[str] = mapped_column(String(255))
+    full_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, default=None)
     
     # Preferences
-    dietary_preferences = Column(String, nullable=True)  # JSON string or separate table
-    allergies = Column(String, nullable=True)
+    dietary_preferences: Mapped[Optional[str]] = mapped_column(String(500), nullable=True, default=None)
+    allergies: Mapped[Optional[str]] = mapped_column(String(500), nullable=True, default=None)
     
     # Status
-    is_active = Column(Boolean, default=True)
-    is_verified = Column(Boolean, default=False)
-    
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     
     # Relationships
-    households = relationship(
+    # quotes for forward references before models are defined
+    households: Mapped[List["Household"]] = relationship(  
         "Household",
         secondary=user_household,
-        back_populates="members"
+        back_populates="members",
+        lazy="selectin"
     )
-    assigned_meals = relationship("Meal", back_populates="assigned_to_user")
-    created_recipes = relationship("Recipe", back_populates="created_by_user")
+    assigned_meals: Mapped[List["Meal"]] = relationship( 
+        "Meal",
+        back_populates="assigned_to_user",
+        foreign_keys="[Meal.assigned_to_id]",
+        lazy="selectin"
+    )
+    created_recipes: Mapped[List["Recipe"]] = relationship( 
+        "Recipe",
+        back_populates="created_by_user",
+        foreign_keys="[Recipe.created_by_id]",
+        lazy="selectin"
+    )

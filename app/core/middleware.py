@@ -7,8 +7,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import logging
 from typing import Sequence, Any
 
-from schema.result import Error, Result, ErrorCategory
-from exception import CustomException
+from ..schemas.result import Error, Result, ErrorCategory
+from ..core.exception import CustomException
 
 logger = logging.getLogger(__name__)
 
