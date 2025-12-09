@@ -9,7 +9,7 @@ from .core.middleware import ExceptionHandlingMiddleware
 from .schemas.result import Result, Error, ErrorCategory
 
 # Import routes
-from .api.v1 import auth, user  # households, meals, recipes, grocery_lists
+from .api.v1 import auth, user, households, meals, recipes, grocery_lists, ingredients, ai
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -35,25 +35,35 @@ app.include_router(
     auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["authentication"]
 )
 app.include_router(user.router, prefix=f"{settings.API_V1_STR}/users", tags=["users"])
+app.include_router(
+    households.router,
+    prefix=f"{settings.API_V1_STR}/households",
+    tags=["households"]
+)
+app.include_router(
+    ingredients.router,
+    prefix=f"{settings.API_V1_STR}",
+    tags=["ingredients"]
+)
+app.include_router(
+    recipes.router,
+    prefix=f"{settings.API_V1_STR}/recipes",
+    tags=["recipes"]
+)
+app.include_router(
+    meals.router,
+    prefix=f"{settings.API_V1_STR}/meals",
+    tags=["meals"]
+)
+app.include_router(
+    grocery_lists.router,
+    prefix=f"{settings.API_V1_STR}/grocery-lists",
+    tags=["grocery-lists"]
+)
 # app.include_router(
-#     households.router,
-#     prefix=f"{settings.API_V1_STR}/households",
-#     tags=["households"]
-# )
-# app.include_router(
-#     meals.router,
-#     prefix=f"{settings.API_V1_STR}/meals",
-#     tags=["meals"]
-# )
-# app.include_router(
-#     recipes.router,
-#     prefix=f"{settings.API_V1_STR}/recipes",
-#     tags=["recipes"]
-# )
-# app.include_router(
-#     grocery_lists.router,
-#     prefix=f"{settings.API_V1_STR}/grocery-lists",
-#     tags=["grocery-lists"]
+#     ai.router,
+#     prefix=f"{settings.API_V1_STR}/ai",
+#     tags=["ai"]
 # )
 
 
