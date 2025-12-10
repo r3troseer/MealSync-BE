@@ -60,11 +60,11 @@ app.include_router(
     prefix=f"{settings.API_V1_STR}/grocery-lists",
     tags=["grocery-lists"]
 )
-# app.include_router(
-#     ai.router,
-#     prefix=f"{settings.API_V1_STR}/ai",
-#     tags=["ai"]
-# )
+app.include_router(
+    ai.router,
+    prefix=f"{settings.API_V1_STR}/ai",
+    tags=["ai"]
+)
 
 
 @app.get("/", response_model=Result[dict])

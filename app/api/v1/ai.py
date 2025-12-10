@@ -1,86 +1,188 @@
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
-from typing import List, Dict, Any
 
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.user import User
 from app.schemas.result import Result
+from app.schemas.ai import (
+    GenerateIngredientsRequest,
+    GenerateIngredientsResponse,
+    GenerateRecipeRequest,
+    GenerateRecipeResponse,
+    GenerateMealPlanRequest,
+    GenerateMealPlanResponse
+)
+from app.services.ai_service import AIService
+from app.core.exception import CustomException, BadRequestException, InternalServerException
 
 router = APIRouter()
 
 
-@router.post("/suggest-recipe", response_model=Result[dict])
-async def suggest_recipe(
-    request_data: Dict[str, Any],
+@router.post("/generate-ingredients", response_model=Result[GenerateIngredientsResponse], status_code=status.HTTP_200_OK)
+async def generate_ingredients(
+    request: GenerateIngredientsRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Accept AI-generated recipe from frontend.
+    Generate ingredient list from meal name using AI.
 
-    Frontend handles the AI call, this endpoint validates and stores the result.
+    - **meal_name**: Name of the meal to generate ingredients for
+    - **servings**: Number of servings (default: 4)
+    - **dietary_restrictions**: Optional dietary constraints (e.g., vegetarian, gluten-free)
+    - **household_id**: Target household for ingredient matching
 
-    Request body should include:
-    - available_ingredients: List[int] - ingredient IDs
-    - preferences: dict - user preferences
-    - ai_response: dict - AI-generated recipe data
+    Returns list of ingredients with matching to existing household ingredients.
+    New ingredients are flagged for user approval before creation.
     """
-    # TODO: Implement validation and storage of AI-generated recipe
-    # This would use RecipeService to create the recipe
+    try:
+        ai_service = AIService(db)
 
-    return Result.successful(data={
-        "message": "AI recipe suggestion endpoint (frontend-driven)",
-        "note": "Frontend should call AI and submit recipe data for validation and storage"
-    })
+        result = ai_service.generate_ingredients_from_meal(
+            meal_name=request.meal_name,
+            household_id=request.household_id,
+            user_id=current_user.id,
+            servings=request.servings,
+            dietary_restrictions=request.dietary_restrictions
+        )
+
+        return Result.successful(data=result)
+
+    except CustomException:
+        raise
+    except Exception as e:
+        raise InternalServerException(
+            message=f"Failed to generate ingredients: {str(e)}"
+        )
 
 
-@router.post("/generate-meal-plan", response_model=Result[dict])
+@router.post("/generate-recipe", response_model=Result[GenerateRecipeResponse], status_code=status.HTTP_200_OK)
+async def generate_recipe(
+    request: GenerateRecipeRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Generate complete recipe from meal name and selected ingredients.
+
+    - **meal_name**: Name of the meal
+    - **ingredient_ids**: List of household ingredient IDs to use
+    - **household_id**: Target household
+    - **servings**: Number of servings
+    - **difficulty**: Optional difficulty filter
+    - **max_prep_time_minutes**: Maximum prep time constraint
+    - **cuisine_type**: Optional cuisine type
+    - **dietary_restrictions**: Optional dietary constraints
+
+    Returns a complete recipe structure ready for user review and saving.
+    Recipe is NOT automatically saved to database.
+    """
+    try:
+        # Validate at least one ingredient
+        if not request.ingredient_ids:
+            raise BadRequestException("At least one ingredient is required")
+
+        ai_service = AIService(db)
+
+        result = ai_service.generate_recipe_from_meal(
+            meal_name=request.meal_name,
+            ingredient_ids=request.ingredient_ids,
+            household_id=request.household_id,
+            user_id=current_user.id,
+            servings=request.servings,
+            difficulty=request.difficulty.value if request.difficulty else None,
+            max_prep_time_minutes=request.max_prep_time_minutes,
+            cuisine_type=request.cuisine_type.value if request.cuisine_type else None,
+            dietary_restrictions=request.dietary_restrictions
+        )
+
+        return Result.successful(data=result)
+
+    except CustomException:
+        raise
+    except Exception as e:
+        raise InternalServerException(
+            message=f"Failed to generate recipe: {str(e)}"
+        )
+
+
+@router.post("/generate-meal-plan", response_model=Result[GenerateMealPlanResponse], status_code=status.HTTP_200_OK)
 async def generate_meal_plan(
-    request_data: Dict[str, Any],
+    request: GenerateMealPlanRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Accept AI-generated meal plan from frontend.
+    Generate meal plan suggestions from available household ingredients.
 
-    Frontend handles the AI call, this endpoint validates and stores the meals.
+    - **household_id**: Target household
+    - **days**: Number of days to plan (1-30)
+    - **meals_per_day**: Meals per day (1-6)
+    - **start_date**: Optional start date (defaults to today)
+    - **use_available_only**: Restrict to only available ingredients
+    - **dietary_preferences**: Optional dietary constraints
+    - **preferred_meal_types**: Optional preferred meal types (breakfast, lunch, dinner, snack)
 
-    Request body should include:
-    - household_id: int
-    - week_start: date
-    - preferences: dict
-    - ai_response: List[dict] - AI-generated meals
+    Returns meal suggestions grouped by day and meal type.
+    Meals are NOT automatically scheduled - user selects which to add.
     """
-    # TODO: Implement validation and storage of AI-generated meal plan
-    # This would use MealService to create the meals
+    try:
+        ai_service = AIService(db)
 
-    return Result.successful(data={
-        "message": "AI meal plan generation endpoint (frontend-driven)",
-        "note": "Frontend should call AI and submit meal data for validation and storage"
-    })
+        result = ai_service.generate_meal_plan_from_ingredients(
+            household_id=request.household_id,
+            user_id=current_user.id,
+            days=request.days,
+            meals_per_day=request.meals_per_day,
+            start_date=request.start_date,
+            dietary_preferences=request.dietary_preferences,
+            use_available_only=request.use_available_only,
+            preferred_meal_types=[mt.value for mt in request.preferred_meal_types] if request.preferred_meal_types else None
+        )
+
+        return Result.successful(data=result)
+
+    except CustomException:
+        raise
+    except Exception as e:
+        raise InternalServerException(
+            message=f"Failed to generate meal plan: {str(e)}"
+        )
 
 
-@router.post("/ingredient-substitute", response_model=Result[dict])
-async def ingredient_substitute(
-    request_data: Dict[str, Any],
+@router.post("/save-generated-recipe", response_model=Result[dict], status_code=status.HTTP_201_CREATED)
+async def save_generated_recipe(
+    generated_recipe: GenerateRecipeResponse,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Accept AI-suggested ingredient substitution from frontend.
+    Save an AI-generated recipe after user approval.
 
-    Frontend handles the AI call, this endpoint just validates the ingredients exist.
+    Takes the GenerateRecipeResponse and creates a Recipe entity in the database.
 
-    Request body should include:
-    - ingredient_id: int - original ingredient
-    - recipe_id: int
-    - suggested_substitute_id: int - AI-suggested substitute
+    - **generated_recipe**: Complete generated recipe response from /generate-recipe endpoint
+
+    Returns success message with created recipe ID and UUID.
     """
-    # TODO: Implement validation of ingredient substitution
-    # Verify both ingredients exist and belong to the household
+    try:
+        ai_service = AIService(db)
 
-    return Result.successful(data={
-        "message": "AI ingredient substitution endpoint (frontend-driven)",
-        "note": "Frontend should call AI and submit substitution for validation"
-    })
+        recipe = ai_service.save_generated_recipe_to_db(
+            generated_recipe=generated_recipe,
+            user_id=current_user.id
+        )
+
+        return Result.successful(data={
+            "message": "AI-generated recipe saved successfully",
+            "recipe_id": recipe.id,
+            "recipe_uuid": recipe.uuid
+        })
+
+    except CustomException:
+        raise
+    except Exception as e:
+        raise InternalServerException(
+            message=f"Failed to save recipe: {str(e)}"
+        )

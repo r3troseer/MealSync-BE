@@ -8,7 +8,9 @@ from app.models.user import User
 from .config import settings
 from .core.exception import AuthenticationException, ResourceNotFoundException
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(
+    tokenUrl=f"{settings.API_V1_STR}/auth/swagger-login"
+)
 
 
 async def get_current_user(

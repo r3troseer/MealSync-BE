@@ -28,7 +28,7 @@ class HouseholdService:
         self.user_repo = UserRepository(db)
         self.meal_repo = MealRepository(db)
 
-    def create_household(self, user_id: int, data: HouseholdCreate) -> Household:
+    def create_household(self, user_id: int, data: HouseholdCreate) -> dict:
         """
         Create a new household with the user as admin.
 
@@ -37,7 +37,7 @@ class HouseholdService:
             data: Household creation data
 
         Returns:
-            Created household
+            Created household with members data
         """
         # Generate unique invite code
         invite_code = self.household_repo.generate_invite_code()
@@ -49,13 +49,28 @@ class HouseholdService:
             invite_code=invite_code,
             created_by_id=user_id
         )
-
+        print("Creating household:", household.name, "with invite code:", household.invite_code, "by user ID:", user_id)
         household = self.household_repo.create(household)
 
         # Add creator as admin member
         self.household_repo.add_member(household.id, user_id, role="admin")
 
-        return household
+        # Fetch members with roles to include in response
+        members = self.household_repo.get_members(household.id)
+
+        # Return household dict with members
+        return {
+            "id": household.id,
+            "uuid": household.uuid,
+            "name": household.name,
+            "description": household.description,
+            "invite_code": household.invite_code,
+            "created_by_id": household.created_by_id,
+            "created_at": household.created_at,
+            "updated_at": household.updated_at,
+            "member_count": len(members),
+            "members": members
+        }
 
     def get_user_households(self, user_id: int) -> List[Household]:
         """Get all households a user belongs to."""

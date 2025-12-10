@@ -36,6 +36,19 @@ async def register(user_data: UserCreate, db: Session = Depends(get_db)):
     return Result.successful(data=user)
 
 
+@router.post("/swagger-login", response_model=Token)
+async def swagger_login(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db)
+):
+    service = AuthService(db)
+    token = service.login(form_data.username, form_data.password)
+    return Token(
+        access_token=token.access_token,
+        token_type=token.token_type
+    )
+
+
 @router.post("/login", response_model=Result[Token])
 async def login(
     form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)
