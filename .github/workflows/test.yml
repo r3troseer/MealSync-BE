@@ -41,7 +41,7 @@ jobs:
     - name: Install dependencies
       run: |
         uv pip install --system pytest pytest-asyncio pytest-cov faker factory-boy
-        uv pip install --system fastapi sqlalchemy psycopg2-binary pydantic pydantic-settings python-dotenv bcrypt pyjwt passlib python-multipart alembic google-genai httpx
+        uv pip install --system fastapi sqlalchemy psycopg2-binary pydantic pydantic-settings python-dotenv bcrypt pyjwt passlib python-multipart alembic google-genai httpx email-validator
 
     - name: Run tests
       env:
