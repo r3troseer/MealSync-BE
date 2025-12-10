@@ -41,3 +41,5 @@ alembic/versions/*.pyc
 dist/
 build/
 *.egg-info/
+
+testing.md
