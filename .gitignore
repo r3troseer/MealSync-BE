@@ -24,6 +24,7 @@ env/
 *.swp
 *.swo
 .DS_Store
+.claude/
 
 # Testing
 .pytest_cache/
