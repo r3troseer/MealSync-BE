@@ -64,10 +64,10 @@ async def generate_recipe(
     db: Session = Depends(get_db)
 ):
     """
-    Generate complete recipe from meal name and selected ingredients.
+    Generate complete recipe from meal name and optional ingredients.
 
     - **meal_name**: Name of the meal
-    - **ingredient_ids**: List of household ingredient IDs to use
+    - **ingredient_ids**: Optional list of household ingredient IDs to use (if empty, AI suggests all ingredients)
     - **household_id**: Target household
     - **servings**: Number of servings
     - **difficulty**: Optional difficulty filter
@@ -77,12 +77,10 @@ async def generate_recipe(
 
     Returns a complete recipe structure ready for user review and saving.
     Recipe is NOT automatically saved to database.
+
+    If ingredient_ids is empty or not provided, AI will suggest ALL ingredients needed for the recipe.
     """
     try:
-        # Validate at least one ingredient
-        if not request.ingredient_ids:
-            raise BadRequestException("At least one ingredient is required")
-
         ai_service = AIService(db)
 
         result = ai_service.generate_recipe_from_meal(
@@ -148,6 +146,58 @@ async def generate_meal_plan(
     except Exception as e:
         raise InternalServerException(
             message=f"Failed to generate meal plan: {str(e)}"
+        )
+
+
+@router.post("/save-ingredients", response_model=Result[dict], status_code=status.HTTP_201_CREATED)
+async def save_generated_ingredients(
+    ingredients_response: GenerateIngredientsResponse,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Create new ingredients in household inventory from AI-generated suggestions.
+
+    Takes the GenerateIngredientsResponse and creates Ingredient entities for
+    ingredients marked as `is_new=True`. Ingredients that already exist in the
+    household are skipped.
+
+    - **ingredients_response**: Complete response from /generate-ingredients endpoint
+
+    Returns:
+    - created_count: Number of new ingredients created
+    - skipped_count: Number of existing ingredients skipped
+    - ingredient_mapping: Map of ingredient names to their IDs (both new and existing)
+    """
+    try:
+        if not ingredients_response.ingredients:
+            raise BadRequestException("No ingredients to save")
+
+        ai_service = AIService(db)
+
+        # Create missing ingredients
+        ingredient_mapping = ai_service.create_missing_ingredients(
+            ingredients=ingredients_response.ingredients,
+            household_id=ingredients_response.household_id,
+            user_id=current_user.id
+        )
+
+        # Count results
+        created_count = sum(1 for ing in ingredients_response.ingredients if ing.is_new)
+        skipped_count = len(ingredients_response.ingredients) - created_count
+
+        return Result.successful(data={
+            "message": f"Successfully created {created_count} new ingredients",
+            "created_count": created_count,
+            "skipped_count": skipped_count,
+            "ingredient_mapping": ingredient_mapping
+        })
+
+    except CustomException:
+        raise
+    except Exception as e:
+        raise InternalServerException(
+            message=f"Failed to save ingredients: {str(e)}"
         )
 
 

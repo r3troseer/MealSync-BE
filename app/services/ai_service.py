@@ -12,6 +12,7 @@ from app.config import settings
 from app.repositories.ingredient_repository import IngredientRepository
 from app.repositories.household_repository import HouseholdRepository
 from app.repositories.grocery_list_repository import GroceryListRepository
+from app.repositories.meal_repository import MealRepository
 from app.services.recipe_service import RecipeService
 from app.models.ingredient import IngredientCategory, UnitOfMeasurement
 from app.schemas.ai import (
@@ -38,6 +39,7 @@ class AIService:
         self.ingredient_repo = IngredientRepository(db)
         self.household_repo = HouseholdRepository(db)
         self.grocery_list_repo = GroceryListRepository(db)
+        self.meal_repo = MealRepository(db)
         self.recipe_service = RecipeService(db)
 
         # Initialize Google GenAI client
@@ -121,7 +123,11 @@ note: Return ONLY valid JSON with no additional text or markdown
 
         if "ingredients" not in response_data:
             raise BadRequestException(
-                "AI returned invalid response format. Please try again."
+                "The AI couldn't generate a valid ingredient list. This might be due to:\n"
+                "• The meal name being too vague or uncommon\n"
+                "• Conflicting dietary restrictions\n"
+                "• Service temporary unavailability\n\n"
+                "Please try again with a more specific meal name or simpler requirements."
             )
 
         # Match ingredients to household inventory
@@ -158,6 +164,7 @@ note: Return ONLY valid JSON with no additional text or markdown
 
         return GenerateIngredientsResponse(
             meal_name=meal_name,
+            household_id=household_id,
             ingredients=generated_ingredients,
             total_ingredients=len(generated_ingredients),
             new_ingredients_count=new_count,
@@ -167,23 +174,25 @@ note: Return ONLY valid JSON with no additional text or markdown
     def generate_recipe_from_meal(
         self,
         meal_name: str,
-        ingredient_ids: List[int],
         household_id: int,
         user_id: int,
+        ingredient_ids: Optional[List[int]] = None,
         servings: int = 4,
         difficulty: Optional[str] = None,
         max_prep_time_minutes: Optional[int] = None,
         cuisine_type: Optional[str] = None,
         dietary_restrictions: Optional[List[str]] = None,
+        language: str = "en",
     ) -> GenerateRecipeResponse:
         """
-        Generate complete recipe from meal name and ingredients.
+        Generate complete recipe from meal name and optional ingredients.
+        If ingredient_ids is empty/None, AI will suggest all ingredients.
 
         Args:
             meal_name: Name of the meal
-            ingredient_ids: List of household ingredient IDs
             household_id: Household ID
             user_id: User ID for authorization
+            ingredient_ids: Optional list of household ingredient IDs to use
             servings: Number of servings
             difficulty: Optional difficulty filter
             max_prep_time_minutes: Maximum prep time
@@ -202,26 +211,44 @@ note: Return ONLY valid JSON with no additional text or markdown
         if not self.household_repo.is_member(household_id, user_id):
             raise AuthorizationException("You must be a member of the household")
 
-        # Fetch ingredients
+        # Fetch ingredients (if provided)
         ingredients = []
-        for ing_id in ingredient_ids:
-            ingredient = self.ingredient_repo.get(ing_id)
-            if not ingredient:
-                raise BadRequestException(f"Ingredient with ID {ing_id} not found")
-            if ingredient.household_id != household_id:
-                raise BadRequestException(
-                    f"Ingredient {ing_id} doesn't belong to this household"
-                )
-            ingredients.append(ingredient)
+        if ingredient_ids:
+            for ing_id in ingredient_ids:
+                ingredient = self.ingredient_repo.get(ing_id)
+                if not ingredient:
+                    raise BadRequestException(f"Ingredient with ID {ing_id} not found")
+                if ingredient.household_id != household_id:
+                    raise BadRequestException(
+                        f"Ingredient {ing_id} doesn't belong to this household"
+                    )
+                ingredients.append(ingredient)
 
-        ingredient_list = ", ".join([ing.name for ing in ingredients])
+        ingredient_list = (
+            ", ".join([ing.name for ing in ingredients])
+            if ingredients
+            else "None provided - suggest all ingredients"
+        )
         restrictions_str = (
             ", ".join(dietary_restrictions) if dietary_restrictions else "None"
         )
 
         # Build prompt
-        prompt = f"""You are a culinary expert. Create a detailed recipe for "{meal_name}" using these ingredients:
+        if ingredients:
+            ingredient_section = f"""Using these main ingredients:
 {ingredient_list}
+
+IMPORTANT: You may suggest additional ingredients needed to complete the recipe (like spices, oils, seasonings, etc.).
+Mark user-provided ingredients with is_user_provided=true, and additional ingredients with is_user_provided=false."""
+        else:
+            ingredient_section = """The user has not provided any specific ingredients.
+
+IMPORTANT: You must suggest ALL ingredients needed for this recipe.
+Mark all ingredients with is_user_provided=false since they are all AI-suggested."""
+
+        prompt = f"""You are a culinary expert. Create a detailed recipe for "{meal_name}".
+
+{ingredient_section}
 
 Requirements:
 - Servings: {servings}
@@ -229,6 +256,7 @@ Requirements:
 - Max prep time: {max_prep_time_minutes or "no limit"} minutes
 - Cuisine type: {cuisine_type or "any"}
 - Dietary restrictions: {restrictions_str}
+- language: {language}
 - Format: Return ONLY valid JSON with no additional text
 
 JSON Schema:
@@ -244,11 +272,13 @@ JSON Schema:
   "calories_per_serving": number (estimate),
   "ingredients": [
     {{
-      "ingredient_name": "name from provided list",
-      "quantity": number,
-      "unit": "gram|kilogram|cup|tablespoon|teaspoon|piece|...",
+      "ingredient_name": "ingredient name",
+      "quantity": "decimal number (e.g., 0.25, 1.5, 2)",
+      "unit": "gram|kilogram|cup|tablespoon|teaspoon|piece|liter|milliliter|ounce|pound|clove|can|bottle|other",
+      "category": "produce|dairy|meat|seafood|grains|spices|condiments|oils|bakery|canned|frozen|other",
       "notes": "preparation notes",
-      "is_optional": false
+      "is_optional": false,
+      "is_user_provided": true if from main ingredients list, false if additional
     }}
   ]
 }}
@@ -264,37 +294,35 @@ note: Return ONLY valid JSON with no additional text or markdown
         # Parse JSON response
         response_data = self._extract_json_from_response(response_text)
 
-        # Map ingredient names back to IDs
+        # Map ingredient names back to IDs (both user-provided and AI-suggested)
         recipe_ingredients = []
         for ing_data in response_data.get("ingredients", []):
-            # Find matching ingredient from provided list
-            ingredient_name = ing_data["ingredient_name"].lower()
-            matched_ingredient = next(
-                (ing for ing in ingredients if ing.name.lower() == ingredient_name),
-                None,
+            ingredient_name = ing_data["ingredient_name"]
+            is_user_provided = ing_data.get("is_user_provided", True)
+
+            # Try to match to existing household ingredient
+            matched_id, confidence = self._match_ingredient_to_household(
+                ingredient_name,
+                household_id,
+                category=IngredientCategory(ing_data.get("category", "other")),
             )
 
-            if not matched_ingredient:
-                # Try fuzzy match
-                for ing in ingredients:
-                    similarity = SequenceMatcher(
-                        None, ingredient_name, ing.name.lower()
-                    ).ratio()
-                    if similarity >= 0.8:
-                        matched_ingredient = ing
-                        break
+            # Determine if this is a new ingredient
+            is_new = matched_id is None
 
-            if matched_ingredient:
-                recipe_ingredients.append(
-                    GeneratedRecipeIngredient(
-                        ingredient_id=matched_ingredient.id,
-                        ingredient_name=matched_ingredient.name,
-                        quantity=float(ing_data["quantity"]),
-                        unit=UnitOfMeasurement(ing_data["unit"]),
-                        notes=ing_data.get("notes"),
-                        is_optional=ing_data.get("is_optional", False),
-                    )
+            recipe_ingredients.append(
+                GeneratedRecipeIngredient(
+                    ingredient_id=matched_id,
+                    ingredient_name=ingredient_name,
+                    quantity=float(ing_data["quantity"]),
+                    unit=UnitOfMeasurement(ing_data["unit"]),
+                    category=IngredientCategory(ing_data.get("category", "other")),
+                    notes=ing_data.get("notes"),
+                    is_optional=ing_data.get("is_optional", False),
+                    is_new=is_new,
+                    is_user_provided=is_user_provided,
                 )
+            )
 
         return GenerateRecipeResponse(
             name=response_data.get("name", meal_name),
@@ -351,7 +379,11 @@ note: Return ONLY valid JSON with no additional text or markdown
 
         if not available_ingredients and use_available_only:
             raise BadRequestException(
-                "No available ingredients found. Cannot generate meal plan with available-only constraint."
+                "No available ingredients found in your household inventory.\n\n"
+                "To generate a meal plan with available ingredients only, you need to:\n"
+                "• Add ingredients to your household\n"
+                "• Mark items as purchased in your grocery lists\n\n"
+                "Alternatively, disable the 'use available only' constraint to get suggestions for any meals."
             )
 
         # Set start date
@@ -359,6 +391,14 @@ note: Return ONLY valid JSON with no additional text or markdown
             start_date = date.today()
 
         end_date = start_date + timedelta(days=days - 1)
+
+        # Get past meals for context (last 30 days of completed meals)
+        past_start_date = start_date - timedelta(days=30)
+        past_meals = self.meal_repo.get_by_date_range(
+            household_id=household_id,
+            start_date=past_start_date,
+            end_date=start_date - timedelta(days=1)
+        )
 
         # Build prompt
         ingredient_list = (
@@ -375,16 +415,39 @@ note: Return ONLY valid JSON with no additional text or markdown
             else "breakfast, lunch, dinner"
         )
 
+        # Format past meals for context
+        past_meals_context = ""
+        if past_meals:
+            past_meal_names = [
+                f"- {meal.name} ({meal.meal_type.value}, {meal.meal_date.strftime('%Y-%m-%d')})"
+                for meal in past_meals[-20:]  # Last 20 meals to avoid overwhelming the prompt
+            ]
+            past_meals_context = f"""
+Past Meals (last 30 days):
+{chr(10).join(past_meal_names)}
+
+IMPORTANT: Use this meal history to:
+- Avoid repeating the same meals too frequently
+- Maintain variety in meal types and cuisines
+- Consider user preferences based on recently planned meals
+- Balance the meal plan with different protein sources and cooking styles
+"""
+        else:
+            past_meals_context = "\nNo past meal history available. Focus on creating a diverse, balanced meal plan.\n"
+
         prompt = f"""You are a meal planning expert. Create a {days}-day meal plan with {meals_per_day} meals per day.
 
 Available Ingredients:
 {ingredient_list}
+
+{past_meals_context}
 
 Requirements:
 - Use available ingredients prioritized
 - Dietary preferences: {preferences_str}
 - Strict constraint: {"Only use available ingredients" if use_available_only else "Can suggest additional ingredients"}
 - Preferred meal types: {meal_types_str}
+- Ensure variety and avoid repeating meals from the past 30 days when possible
 - Format: Return ONLY valid JSON
 
 JSON Schema:
@@ -408,15 +471,24 @@ Generate meal plan:
 note: Return ONLY valid JSON with no additional text or markdown
 """
 
-        # Call Gemini API
-        response_text = self._call_gemini_with_retry(prompt, temperature=0.6)
+        # Call Gemini API with more powerful model for meal planning
+        response_text = self._call_gemini_with_retry(
+            prompt, temperature=0.6, model=settings.GEMINI_MEAL_PLAN_MODEL
+        )
 
         # Parse JSON response
         response_data = self._extract_json_from_response(response_text)
 
         if "meal_plan" not in response_data:
             raise BadRequestException(
-                "AI returned invalid response format. Please try again."
+                "The AI couldn't generate a valid meal plan. This might be due to:\n"
+                "• Too many conflicting dietary preferences\n"
+                "• Not enough available ingredients for the constraints\n"
+                "• Service temporary unavailability\n\n"
+                "Please try again with:\n"
+                "• Fewer dietary restrictions\n"
+                "• Fewer days in the plan\n"
+                "• Disable 'use available only' if enabled"
             )
 
         # Process meal suggestions
@@ -475,11 +547,58 @@ note: Return ONLY valid JSON with no additional text or markdown
             meals_requiring_shopping=meals_requiring_shopping,
         )
 
+    def create_missing_ingredients(
+        self, ingredients: List[GeneratedIngredient], household_id: int, user_id: int
+    ) -> Dict[str, int]:
+        """
+        Create missing ingredients in household inventory.
+
+        Args:
+            ingredients: List of generated ingredients
+            household_id: Household ID
+            user_id: User creating ingredients
+
+        Returns:
+            Mapping of ingredient names to their created IDs
+
+        Raises:
+            AuthorizationException: If user not member of household
+        """
+        from app.schemas.ingredient import IngredientCreate
+
+        # Verify household membership
+        if not self.household_repo.is_member(household_id, user_id):
+            raise AuthorizationException("You must be a member of the household")
+
+        created_mapping = {}
+
+        for ing in ingredients:
+            if ing.is_new:
+                # Create ingredient
+                ingredient_create = IngredientCreate(
+                    name=ing.name,
+                    category=ing.category,
+                    default_unit=ing.unit,
+                    notes=ing.notes or "Auto-created from AI suggestion",
+                )
+
+                created_ingredient = self.ingredient_repo.create(
+                    obj_in=ingredient_create, household_id=household_id
+                )
+
+                created_mapping[ing.name] = created_ingredient.id
+            elif ing.existing_ingredient_id:
+                # Use existing ingredient
+                created_mapping[ing.name] = ing.existing_ingredient_id
+
+        return created_mapping
+
     def save_generated_recipe_to_db(
         self, generated_recipe: GenerateRecipeResponse, user_id: int
     ) -> Any:
         """
         Save an AI-generated recipe to the database after user approval.
+        Automatically creates any missing ingredients in the household first.
 
         Args:
             generated_recipe: Generated recipe response
@@ -491,7 +610,37 @@ note: Return ONLY valid JSON with no additional text or markdown
         Raises:
             AuthorizationException: If user not member
         """
-        # Convert to RecipeCreate schema
+        from app.schemas.ingredient import IngredientCreate
+
+        # Verify household membership
+        if not self.household_repo.is_member(generated_recipe.household_id, user_id):
+            raise AuthorizationException("You must be a member of the household")
+
+        # Auto-create missing ingredients
+        ingredient_id_map = {}
+        new_ingredients_created = []
+
+        for ing in generated_recipe.ingredients:
+            if ing.is_new and ing.ingredient_id is None:
+                # Create the missing ingredient
+                ingredient_create = IngredientCreate(
+                    name=ing.ingredient_name,
+                    category=ing.category or IngredientCategory.OTHER,
+                    default_unit=ing.unit,
+                    notes=ing.notes or "Auto-created from AI recipe suggestion",
+                )
+
+                created_ingredient = self.ingredient_repo.create(
+                    obj_in=ingredient_create, household_id=generated_recipe.household_id
+                )
+
+                ingredient_id_map[ing.ingredient_name] = created_ingredient.id
+                new_ingredients_created.append(created_ingredient.name)
+            elif ing.ingredient_id:
+                # Use existing ingredient ID
+                ingredient_id_map[ing.ingredient_name] = ing.ingredient_id
+
+        # Convert to RecipeCreate schema with updated ingredient IDs
         recipe_create = RecipeCreate(
             household_id=generated_recipe.household_id,
             name=generated_recipe.name,
@@ -507,7 +656,9 @@ note: Return ONLY valid JSON with no additional text or markdown
             source_url="AI Generated",
             ingredients=[
                 RecipeIngredientCreate(
-                    ingredient_id=ing.ingredient_id,
+                    ingredient_id=ingredient_id_map.get(
+                        ing.ingredient_name, ing.ingredient_id
+                    ),
                     quantity=ing.quantity,
                     unit=ing.unit,
                     notes=ing.notes,
@@ -517,17 +668,28 @@ note: Return ONLY valid JSON with no additional text or markdown
             ],
         )
 
-        return self.recipe_service.create_recipe(user_id, recipe_create)
+        recipe = self.recipe_service.create_recipe(user_id, recipe_create)
+
+        # Log created ingredients for debugging
+        if new_ingredients_created:
+            print(
+                f"Auto-created {len(new_ingredients_created)} new ingredients: {', '.join(new_ingredients_created)}"
+            )
+
+        return recipe
 
     # ===== Helper Methods =====
 
-    def _call_gemini_with_retry(self, prompt: str, temperature: float = 0.7) -> str:
+    def _call_gemini_with_retry(
+        self, prompt: str, temperature: float = 0.7, model: Optional[str] = None
+    ) -> str:
         """
         Call Gemini API with retry logic.
 
         Args:
             prompt: Prompt to send
             temperature: Temperature parameter
+            model: Optional model override (defaults to settings.GEMINI_MODEL)
 
         Returns:
             Response text
@@ -537,7 +699,7 @@ note: Return ONLY valid JSON with no additional text or markdown
         """
         try:
             response = self.client.models.generate_content(
-                model=settings.GEMINI_MODEL,
+                model=model or settings.GEMINI_MODEL,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=temperature,
@@ -603,6 +765,7 @@ note: Return ONLY valid JSON with no additional text or markdown
 
         # Try finding JSON object
         json_pattern = r"\{.*\}"
+        print(f"Response Text for JSON extraction: {response_text}")  # --- IGNORE ---
         match = re.search(json_pattern, response_text, re.DOTALL)
         print(f"Extracted JSON candidate: {match.group(0) if match else 'None'}")
         if match:
@@ -611,7 +774,9 @@ note: Return ONLY valid JSON with no additional text or markdown
             except json.JSONDecodeError:
                 pass
         raise BadRequestException(
-            "AI returned invalid response format. Please try again."
+            "The AI service returned data in an unexpected format.\n\n"
+            "This is usually temporary. Please try your request again.\n"
+            "If the problem persists, try simplifying your request."
         )
 
     def _match_ingredient_to_household(

@@ -32,7 +32,8 @@ class Settings(BaseSettings):
 
     # AI Configuration
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-2.0-pro"
+    GEMINI_MODEL: str = "gemini-2.0-flash-lite"  # Default model for ingredients and recipes
+    GEMINI_MEAL_PLAN_MODEL: str = "gemini-2.0-flash"  # More powerful model for meal planning
     GEMINI_TEMPERATURE: float = 0.7
     GEMINI_MAX_TOKENS: int = 2048
     GEMINI_API_TIMEOUT: int = 30

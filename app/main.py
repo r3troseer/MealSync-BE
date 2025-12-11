@@ -1,5 +1,7 @@
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
@@ -9,7 +11,16 @@ from .core.middleware import ExceptionHandlingMiddleware
 from .schemas.result import Result, Error, ErrorCategory
 
 # Import routes
-from .api.v1 import auth, user, households, meals, recipes, grocery_lists, ingredients, ai
+from .api.v1 import (
+    auth,
+    user,
+    households,
+    meals,
+    recipes,
+    grocery_lists,
+    ingredients,
+    ai,
+)
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -17,6 +28,76 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     description="MealSync API - Meal planning and grocery list management",
 )
+
+
+# Global exception handlers (catch exceptions before middleware)
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """
+    Handle Pydantic request validation errors and return Result format.
+    This catches validation errors before they reach the middleware.
+    """
+    errors = exc.errors()
+    error_messages = []
+
+    for error in errors:
+        # Build human-readable location path
+        loc = " -> ".join(str(x) for x in error["loc"])
+        msg = error["msg"]
+        error_type = error.get("type", "")
+
+        # Create readable error message
+        if error_type:
+            error_messages.append(f"{loc}: {msg} (type: {error_type})")
+        else:
+            error_messages.append(f"{loc}: {msg}")
+
+    readable_message = "; ".join(error_messages)
+
+    return JSONResponse(
+        status_code=422,
+        content={
+            "success": False,
+            "error": {
+                "message": readable_message,
+                "status_code": 422,
+                "category": "Validation",
+            },
+            "data": None,
+        },
+    )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """
+    Convert FastAPI HTTPExceptions to Result format.
+    Ensures all HTTP exceptions follow the same response structure.
+    """
+    # Infer category from status code
+    category_map = {
+        400: "BadRequest",
+        401: "Authentication",
+        403: "Authorization",
+        404: "NotFound",
+        409: "ResourceConflict",
+        422: "Validation",
+    }
+    category = category_map.get(exc.status_code, "Error")
+
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "success": False,
+            "error": {
+                "message": exc.detail,
+                "status_code": exc.status_code,
+                "category": category,
+            },
+            "data": None,
+        },
+    )
+
 
 # Add exception handling middleware FIRST
 app.add_middleware(ExceptionHandlingMiddleware, log_internal_errors=settings.DEBUG)
@@ -36,35 +117,21 @@ app.include_router(
 )
 app.include_router(user.router, prefix=f"{settings.API_V1_STR}/users", tags=["users"])
 app.include_router(
-    households.router,
-    prefix=f"{settings.API_V1_STR}/households",
-    tags=["households"]
+    households.router, prefix=f"{settings.API_V1_STR}/households", tags=["households"]
 )
 app.include_router(
-    ingredients.router,
-    prefix=f"{settings.API_V1_STR}",
-    tags=["ingredients"]
+    ingredients.router, prefix=f"{settings.API_V1_STR}", tags=["ingredients"]
 )
 app.include_router(
-    recipes.router,
-    prefix=f"{settings.API_V1_STR}/recipes",
-    tags=["recipes"]
+    recipes.router, prefix=f"{settings.API_V1_STR}/recipes", tags=["recipes"]
 )
-app.include_router(
-    meals.router,
-    prefix=f"{settings.API_V1_STR}/meals",
-    tags=["meals"]
-)
+app.include_router(meals.router, prefix=f"{settings.API_V1_STR}/meals", tags=["meals"])
 app.include_router(
     grocery_lists.router,
     prefix=f"{settings.API_V1_STR}/grocery-lists",
-    tags=["grocery-lists"]
+    tags=["grocery-lists"],
 )
-app.include_router(
-    ai.router,
-    prefix=f"{settings.API_V1_STR}/ai",
-    tags=["ai"]
-)
+app.include_router(ai.router, prefix=f"{settings.API_V1_STR}/ai", tags=["ai"])
 
 
 @app.get("/", response_model=Result[dict])

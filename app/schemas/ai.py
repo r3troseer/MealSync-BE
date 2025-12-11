@@ -9,18 +9,23 @@ from app.models.meal import MealType
 
 # ===== Generate Ingredients Schemas =====
 
+
 class GenerateIngredientsRequest(BaseModel):
     """Request to generate ingredients from meal name"""
+
     meal_name: str = Field(..., min_length=1, max_length=200)
     servings: int = Field(4, ge=1, le=100)
     dietary_restrictions: Optional[List[str]] = Field(
         None, description="e.g., vegetarian, gluten-free, vegan"
     )
-    household_id: int = Field(..., description="Household context for ingredient matching")
+    household_id: int = Field(
+        ..., description="Household context for ingredient matching"
+    )
 
 
 class GeneratedIngredient(BaseModel):
     """AI-generated ingredient with matching info"""
+
     name: str
     quantity: float
     unit: UnitOfMeasurement
@@ -37,7 +42,9 @@ class GeneratedIngredient(BaseModel):
 
 class GenerateIngredientsResponse(BaseModel):
     """Response with generated ingredients"""
+
     meal_name: str
+    household_id: int
     ingredients: List[GeneratedIngredient]
     total_ingredients: int
     new_ingredients_count: int
@@ -46,11 +53,13 @@ class GenerateIngredientsResponse(BaseModel):
 
 # ===== Generate Recipe Schemas =====
 
+
 class GenerateRecipeRequest(BaseModel):
-    """Request to generate recipe from meal name and ingredients"""
+    """Request to generate recipe from meal name and optional ingredients"""
+
     meal_name: str = Field(..., min_length=1, max_length=200)
-    ingredient_ids: List[int] = Field(
-        ..., min_length=1, description="Household ingredient IDs to use"
+    ingredient_ids: Optional[List[int]] = Field(
+        None, description="Optional household ingredient IDs to use (AI will suggest all ingredients if not provided)"
     )
     household_id: int
     servings: int = Field(4, ge=1, le=100)
@@ -62,16 +71,25 @@ class GenerateRecipeRequest(BaseModel):
 
 class GeneratedRecipeIngredient(BaseModel):
     """Ingredient usage in generated recipe"""
-    ingredient_id: int
+
+    ingredient_id: Optional[int] = Field(
+        None, description="Household ingredient ID (null if new)"
+    )
     ingredient_name: str
     quantity: float
     unit: UnitOfMeasurement
+    category: Optional[IngredientCategory] = None
     notes: Optional[str] = None
     is_optional: bool = False
+    is_new: bool = Field(False, description="True if ingredient needs to be created")
+    is_user_provided: bool = Field(
+        False, description="True if from user's selected ingredients"
+    )
 
 
 class GenerateRecipeResponse(BaseModel):
     """Response with generated recipe (not yet saved)"""
+
     name: str
     description: Optional[str]
     instructions: str
@@ -92,8 +110,10 @@ class GenerateRecipeResponse(BaseModel):
 
 # ===== Generate Meal Plan Schemas =====
 
+
 class GenerateMealPlanRequest(BaseModel):
     """Request to generate meal plan from available ingredients"""
+
     household_id: int
     days: int = Field(7, ge=1, le=30, description="Number of days to plan")
     meals_per_day: int = Field(3, ge=1, le=6, description="Meals per day")
@@ -109,12 +129,15 @@ class GenerateMealPlanRequest(BaseModel):
 
 class GeneratedMealSuggestion(BaseModel):
     """Single meal suggestion in the plan"""
+
     day: int
     meal_date: Optional[date] = None
     meal_type: MealType
     meal_name: str
     description: Optional[str] = None
-    ingredients_used: List[str] = Field(..., description="Ingredient names from available")
+    ingredients_used: List[str] = Field(
+        ..., description="Ingredient names from available"
+    )
     additional_ingredients_needed: List[str] = Field(default_factory=list)
     estimated_prep_time_minutes: Optional[int] = None
     estimated_calories: Optional[int] = None
@@ -126,6 +149,7 @@ class GeneratedMealSuggestion(BaseModel):
 
 class GenerateMealPlanResponse(BaseModel):
     """Response with generated meal plan suggestions"""
+
     household_id: int
     start_date: date
     end_date: date

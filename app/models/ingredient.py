@@ -14,6 +14,10 @@ class IngredientCategory(str, enum.Enum):
     MEAT = "meat"
     SEAFOOD = "seafood"
     DAIRY = "dairy"
+    GRAINS = "grains"
+    CONDIMENTS = "condiments"
+    OILS = "oils"
+    CANNED = "canned"
     BAKERY = "bakery"
     PANTRY = "pantry"
     SPICES = "spices"
@@ -49,10 +53,13 @@ class UnitOfMeasurement(str, enum.Enum):
     PACKAGE = "package"
     CAN = "can"
     BUNCH = "bunch"
+    BOTTLE = "bottle"
+    STICK = "stick"
+    # PINCH = "pinch"
 
     # Other
-    TO_TASTE = "to_taste"
-    AS_NEEDED = "as_needed"
+    # TO_TASTE = "to_taste"
+    # AS_NEEDED = "as_needed"
 
 
 class Ingredient(BaseModel):
