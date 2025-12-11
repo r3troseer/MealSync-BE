@@ -23,7 +23,7 @@ from app.schemas.ai import (
     GenerateMealPlanResponse,
     GeneratedMealSuggestion,
 )
-from app.schemas.recipe import RecipeCreate, RecipeIngredientCreate
+from app.schemas.recipe import RecipeCreate
 from app.core.exception import (
     BadRequestException,
     InternalServerException,
@@ -547,128 +547,64 @@ note: Return ONLY valid JSON with no additional text or markdown
             meals_requiring_shopping=meals_requiring_shopping,
         )
 
-    def create_missing_ingredients(
-        self, ingredients: List[GeneratedIngredient], household_id: int, user_id: int
-    ) -> Dict[str, int]:
-        """
-        Create missing ingredients in household inventory.
-
-        Args:
-            ingredients: List of generated ingredients
-            household_id: Household ID
-            user_id: User creating ingredients
-
-        Returns:
-            Mapping of ingredient names to their created IDs
-
-        Raises:
-            AuthorizationException: If user not member of household
-        """
-        from app.schemas.ingredient import IngredientCreate
-
-        # Verify household membership
-        if not self.household_repo.is_member(household_id, user_id):
-            raise AuthorizationException("You must be a member of the household")
-
-        created_mapping = {}
-
-        for ing in ingredients:
-            if ing.is_new:
-                # Create ingredient
-                ingredient_create = IngredientCreate(
-                    name=ing.name,
-                    category=ing.category,
-                    default_unit=ing.unit,
-                    notes=ing.notes or "Auto-created from AI suggestion",
-                )
-
-                created_ingredient = self.ingredient_repo.create(
-                    obj_in=ingredient_create, household_id=household_id
-                )
-
-                created_mapping[ing.name] = created_ingredient.id
-            elif ing.existing_ingredient_id:
-                # Use existing ingredient
-                created_mapping[ing.name] = ing.existing_ingredient_id
-
-        return created_mapping
-
-    def save_generated_recipe_to_db(
-        self, generated_recipe: GenerateRecipeResponse, user_id: int
+    def save_recipe_with_ingredient_creation(
+        self, recipe_data: RecipeCreate, user_id: int
     ) -> Any:
         """
-        Save an AI-generated recipe to the database after user approval.
-        Automatically creates any missing ingredients in the household first.
+        Save recipe with auto-creation of missing ingredients.
+
+        This method extends standard recipe creation by:
+        1. Checking which ingredient IDs don't exist (ingredient_id is None)
+        2. Auto-creating missing ingredients in the household
+        3. Updating recipe_data with newly created ingredient IDs
+        4. Delegating to standard recipe creation
 
         Args:
-            generated_recipe: Generated recipe response
-            user_id: User ID creating the recipe
+            recipe_data: Standard RecipeCreate schema (can be edited by user)
+            user_id: User performing the action
 
         Returns:
             Created Recipe object
 
         Raises:
             AuthorizationException: If user not member
+            BadRequestException: If ingredient validation fails
         """
         from app.schemas.ingredient import IngredientCreate
 
         # Verify household membership
-        if not self.household_repo.is_member(generated_recipe.household_id, user_id):
+        if not self.household_repo.is_member(recipe_data.household_id, user_id):
             raise AuthorizationException("You must be a member of the household")
 
-        # Auto-create missing ingredients
-        ingredient_id_map = {}
+        # Auto-create missing ingredients (those with ingredient_id=None)
         new_ingredients_created = []
 
-        for ing in generated_recipe.ingredients:
-            if ing.is_new and ing.ingredient_id is None:
-                # Create the missing ingredient
+        for recipe_ing in recipe_data.ingredients:
+            if recipe_ing.ingredient_id is None:
+                # Ingredient doesn't exist - need to create it
+                if not recipe_ing.ingredient_name:
+                    raise BadRequestException(
+                        "Ingredients without IDs must provide ingredient_name for auto-creation"
+                    )
+
                 ingredient_create = IngredientCreate(
-                    name=ing.ingredient_name,
-                    category=ing.category or IngredientCategory.OTHER,
-                    default_unit=ing.unit,
-                    notes=ing.notes or "Auto-created from AI recipe suggestion",
+                    name=recipe_ing.ingredient_name,
+                    category=recipe_ing.ingredient_category or IngredientCategory.OTHER,
+                    default_unit=recipe_ing.unit,
+                    notes="Auto-created from AI recipe",
                 )
 
                 created_ingredient = self.ingredient_repo.create(
-                    obj_in=ingredient_create, household_id=generated_recipe.household_id
+                    obj_in=ingredient_create,
+                    household_id=recipe_data.household_id
                 )
 
-                ingredient_id_map[ing.ingredient_name] = created_ingredient.id
+                # Update the recipe ingredient with the newly created ID
+                recipe_ing.ingredient_id = created_ingredient.id
                 new_ingredients_created.append(created_ingredient.name)
-            elif ing.ingredient_id:
-                # Use existing ingredient ID
-                ingredient_id_map[ing.ingredient_name] = ing.ingredient_id
 
-        # Convert to RecipeCreate schema with updated ingredient IDs
-        recipe_create = RecipeCreate(
-            household_id=generated_recipe.household_id,
-            name=generated_recipe.name,
-            description=generated_recipe.description,
-            instructions=generated_recipe.instructions,
-            prep_time_minutes=generated_recipe.prep_time_minutes,
-            cook_time_minutes=generated_recipe.cook_time_minutes,
-            servings=generated_recipe.servings,
-            difficulty=generated_recipe.difficulty,
-            cuisine_type=generated_recipe.cuisine_type,
-            tags=generated_recipe.tags,
-            calories_per_serving=generated_recipe.calories_per_serving,
-            source_url="AI Generated",
-            ingredients=[
-                RecipeIngredientCreate(
-                    ingredient_id=ingredient_id_map.get(
-                        ing.ingredient_name, ing.ingredient_id
-                    ),
-                    quantity=ing.quantity,
-                    unit=ing.unit,
-                    notes=ing.notes,
-                    is_optional=ing.is_optional,
-                )
-                for ing in generated_recipe.ingredients
-            ],
-        )
-
-        recipe = self.recipe_service.create_recipe(user_id, recipe_create)
+        # Delegate to standard recipe creation
+        recipe = self.recipe_service.create_recipe(user_id, recipe_data)
 
         # Log created ingredients for debugging
         if new_ingredients_created:

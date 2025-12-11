@@ -13,8 +13,9 @@ from app.schemas.ai import (
     GenerateMealPlanRequest,
     GenerateMealPlanResponse
 )
+from app.schemas.recipe import RecipeCreate
 from app.services.ai_service import AIService
-from app.core.exception import CustomException, BadRequestException, InternalServerException
+from app.core.exception import CustomException, InternalServerException
 
 router = APIRouter()
 
@@ -149,85 +150,52 @@ async def generate_meal_plan(
         )
 
 
-@router.post("/save-ingredients", response_model=Result[dict], status_code=status.HTTP_201_CREATED)
-async def save_generated_ingredients(
-    ingredients_response: GenerateIngredientsResponse,
+@router.post("/save-recipe", response_model=Result[dict], status_code=status.HTTP_201_CREATED)
+async def save_recipe_with_auto_create(
+    recipe_data: RecipeCreate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Create new ingredients in household inventory from AI-generated suggestions.
+    Save a recipe with automatic creation of missing ingredients.
 
-    Takes the GenerateIngredientsResponse and creates Ingredient entities for
-    ingredients marked as `is_new=True`. Ingredients that already exist in the
-    household are skipped.
+    Designed for AI-generated recipes where ingredients may not exist yet.
+    For standard recipe creation with existing ingredients, use POST /recipes.
 
-    - **ingredients_response**: Complete response from /generate-ingredients endpoint
+    This endpoint differs from /recipes by:
+    - Auto-creating ingredients when ingredient_id is None
+    - Requiring ingredient_name for new ingredients
+    - Relaxing validation on ingredient existence
+
+    Request Body:
+    - Standard RecipeCreate schema
+    - For new ingredients: Set ingredient_id=None, provide ingredient_name
+    - For existing ingredients: Provide ingredient_id only
 
     Returns:
-    - created_count: Number of new ingredients created
-    - skipped_count: Number of existing ingredients skipped
-    - ingredient_mapping: Map of ingredient names to their IDs (both new and existing)
-    """
-    try:
-        if not ingredients_response.ingredients:
-            raise BadRequestException("No ingredients to save")
-
-        ai_service = AIService(db)
-
-        # Create missing ingredients
-        ingredient_mapping = ai_service.create_missing_ingredients(
-            ingredients=ingredients_response.ingredients,
-            household_id=ingredients_response.household_id,
-            user_id=current_user.id
-        )
-
-        # Count results
-        created_count = sum(1 for ing in ingredients_response.ingredients if ing.is_new)
-        skipped_count = len(ingredients_response.ingredients) - created_count
-
-        return Result.successful(data={
-            "message": f"Successfully created {created_count} new ingredients",
-            "created_count": created_count,
-            "skipped_count": skipped_count,
-            "ingredient_mapping": ingredient_mapping
-        })
-
-    except CustomException:
-        raise
-    except Exception as e:
-        raise InternalServerException(
-            message=f"Failed to save ingredients: {str(e)}"
-        )
-
-
-@router.post("/save-generated-recipe", response_model=Result[dict], status_code=status.HTTP_201_CREATED)
-async def save_generated_recipe(
-    generated_recipe: GenerateRecipeResponse,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """
-    Save an AI-generated recipe after user approval.
-
-    Takes the GenerateRecipeResponse and creates a Recipe entity in the database.
-
-    - **generated_recipe**: Complete generated recipe response from /generate-recipe endpoint
-
-    Returns success message with created recipe ID and UUID.
+    - recipe_id: Created recipe ID
+    - recipe_uuid: Recipe UUID for retrieval
+    - created_ingredients_count: Number of ingredients auto-created
     """
     try:
         ai_service = AIService(db)
 
-        recipe = ai_service.save_generated_recipe_to_db(
-            generated_recipe=generated_recipe,
+        recipe = ai_service.save_recipe_with_ingredient_creation(
+            recipe_data=recipe_data,
             user_id=current_user.id
         )
 
+        # Count how many ingredients were created
+        created_count = sum(
+            1 for ing in recipe_data.ingredients
+            if ing.ingredient_id is None
+        )
+
         return Result.successful(data={
-            "message": "AI-generated recipe saved successfully",
+            "message": "Recipe saved successfully",
             "recipe_id": recipe.id,
-            "recipe_uuid": recipe.uuid
+            "recipe_uuid": recipe.uuid,
+            "created_ingredients_count": created_count
         })
 
     except CustomException:

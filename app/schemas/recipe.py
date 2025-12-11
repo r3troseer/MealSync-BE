@@ -1,18 +1,27 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List
 from datetime import datetime
 from app.models.recipe import DifficultyLevel, CuisineType
-from app.models.ingredient import UnitOfMeasurement
+from app.models.ingredient import UnitOfMeasurement, IngredientCategory
 
 
 class RecipeIngredientCreate(BaseModel):
     """Schema for creating a recipe ingredient."""
-    ingredient_id: int = Field(..., description="Ingredient ID")
+    ingredient_id: Optional[int] = Field(None, gt=0, description="Existing ingredient ID, or None for auto-create")
+    ingredient_name: Optional[str] = Field(None, min_length=1, max_length=100, description="Required if ingredient_id is None")
+    ingredient_category: Optional[IngredientCategory] = Field(None, description="Category for new ingredients")
     quantity: float = Field(..., gt=0, description="Quantity needed")
     unit: UnitOfMeasurement = Field(..., description="Unit of measurement")
     notes: Optional[str] = Field(None, max_length=200, description="Preparation notes (e.g., 'chopped', 'diced')")
     is_optional: bool = Field(False, description="Whether this ingredient is optional")
     order: Optional[int] = Field(None, description="Display order in recipe")
+
+    @model_validator(mode='after')
+    def validate_ingredient(self):
+        """Either ingredient_id or ingredient_name must be provided"""
+        if self.ingredient_id is None and self.ingredient_name is None:
+            raise ValueError("Either ingredient_id or ingredient_name must be provided")
+        return self
 
 
 class RecipeIngredientResponse(BaseModel):
