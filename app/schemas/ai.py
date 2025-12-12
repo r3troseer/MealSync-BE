@@ -115,7 +115,7 @@ class GenerateMealPlanRequest(BaseModel):
     """Request to generate meal plan from available ingredients"""
 
     household_id: int
-    days: int = Field(7, ge=1, le=30, description="Number of days to plan")
+    days: int = Field(7, ge=1, le=7, description="Number of days to plan")
     meals_per_day: int = Field(3, ge=1, le=6, description="Meals per day")
     start_date: Optional[date] = Field(None, description="Start date for meal plan")
     dietary_preferences: Optional[List[str]] = None

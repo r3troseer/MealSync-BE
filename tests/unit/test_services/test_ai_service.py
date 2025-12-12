@@ -103,7 +103,7 @@ def mock_gemini_client(monkeypatch):
                         "description": "Classic breakfast",
                         "ingredients_used": ["eggs", "salt"],
                         "additional_ingredients_needed": [],
-                        "estimated_prep_time": 10,
+                        "estimated_prep_time_minutes": 10,
                         "estimated_calories": 200
                     },
                     {
@@ -113,7 +113,7 @@ def mock_gemini_client(monkeypatch):
                         "description": "Cold pasta salad",
                         "ingredients_used": ["pasta", "tomato sauce"],
                         "additional_ingredients_needed": ["olive oil"],
-                        "estimated_prep_time": 15,
+                        "estimated_prep_time_minutes": 15,
                         "estimated_calories": 350
                     },
                     {
@@ -806,7 +806,7 @@ class TestSaveRecipeWithIngredientCreation:
             ]
         )
 
-        recipe = service.save_recipe_with_ingredient_creation(
+        recipe, created_count = service.save_recipe_with_ingredient_creation(
             recipe_data=recipe_data,
             user_id=test_user.id
         )
@@ -814,6 +814,7 @@ class TestSaveRecipeWithIngredientCreation:
         assert recipe is not None
         assert recipe.name == "Simple Pasta"
         assert len(recipe.ingredients) == 2
+        assert created_count == 0  # All ingredients already existed
 
     def test_save_recipe_with_auto_create(self, db_session, test_household, test_user):
         """Test saving recipe with auto-creation of new ingredients"""
@@ -840,7 +841,7 @@ class TestSaveRecipeWithIngredientCreation:
             ]
         )
 
-        recipe = service.save_recipe_with_ingredient_creation(
+        recipe, created_count = service.save_recipe_with_ingredient_creation(
             recipe_data=recipe_data,
             user_id=test_user.id
         )
@@ -850,6 +851,7 @@ class TestSaveRecipeWithIngredientCreation:
         assert len(recipe.ingredients) == 1
         # Verify ingredient was auto-created
         assert recipe.ingredients[0].ingredient_id is not None
+        assert created_count == 1  # Verify 1 ingredient was created
 
     def test_save_recipe_mixed_ingredients(self, db_session, test_household, test_user, test_ingredients):
         """Test saving recipe with mix of existing and new ingredients"""
@@ -881,42 +883,29 @@ class TestSaveRecipeWithIngredientCreation:
             ]
         )
 
-        recipe = service.save_recipe_with_ingredient_creation(
+        recipe, created_count = service.save_recipe_with_ingredient_creation(
             recipe_data=recipe_data,
             user_id=test_user.id
         )
 
         assert recipe is not None
         assert len(recipe.ingredients) == 2
+        assert created_count == 1  # Verify 1 new ingredient was created (saffron)
 
-    def test_save_recipe_missing_ingredient_name(self, db_session, test_household, test_user):
+    def test_save_recipe_missing_ingredient_name(self):
         """Test error when ingredient_id=None but ingredient_name not provided"""
-        service = AIService(db_session)
+        from pydantic import ValidationError
 
-        recipe_data = RecipeCreate(
-            household_id=test_household.id,
-            name="Invalid Recipe",
-            description="Missing ingredient name",
-            instructions="Cook",
-            servings=4,
-            is_public=False,
-            ingredients=[
-                RecipeIngredientCreate(
-                    ingredient_id=None,  # New ingredient
-                    ingredient_name=None,  # Missing name!
-                    quantity=1,
-                    unit=UnitOfMeasurement.GRAM
-                )
-            ]
-        )
-
-        with pytest.raises(BadRequestException) as exc_info:
-            service.save_recipe_with_ingredient_creation(
-                recipe_data=recipe_data,
-                user_id=test_user.id
+        # Pydantic validation will raise ValidationError when creating RecipeIngredientCreate
+        with pytest.raises(ValidationError) as exc_info:
+            RecipeIngredientCreate(
+                ingredient_id=None,  # New ingredient
+                ingredient_name=None,  # Missing name!
+                quantity=1.0,
+                unit=UnitOfMeasurement.GRAM
             )
 
-        assert "ingredient_name" in str(exc_info.value).lower()
+        assert "ingredient_name must be provided" in str(exc_info.value).lower()
 
     def test_save_recipe_unauthorized(self, db_session, test_household, test_user, test_ingredients):
         """Test unauthorized save when user not in household"""

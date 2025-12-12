@@ -109,7 +109,10 @@ class RecipeRepository(BaseRepository[Recipe]):
 
     def add_ingredient(self, recipe_id: int, ingredient_data: dict) -> RecipeIngredient:
         """Add an ingredient to a recipe."""
-        recipe_ingredient = RecipeIngredient(recipe_id=recipe_id, **ingredient_data)
+        # Filter out schema-only fields that aren't in RecipeIngredient model
+        model_data = {k: v for k, v in ingredient_data.items()
+                     if k not in ['ingredient_name', 'ingredient_category']}
+        recipe_ingredient = RecipeIngredient(recipe_id=recipe_id, **model_data)
         self.db.add(recipe_ingredient)
         self.db.commit()
         self.db.refresh(recipe_ingredient)
@@ -148,7 +151,10 @@ class RecipeRepository(BaseRepository[Recipe]):
 
         # Add new ingredients
         for ingredient_data in ingredients:
-            recipe_ingredient = RecipeIngredient(recipe_id=recipe_id, **ingredient_data)
+            # Filter out schema-only fields that aren't in RecipeIngredient model
+            model_data = {k: v for k, v in ingredient_data.items()
+                         if k not in ['ingredient_name', 'ingredient_category']}
+            recipe_ingredient = RecipeIngredient(recipe_id=recipe_id, **model_data)
             self.db.add(recipe_ingredient)
 
         self.db.commit()

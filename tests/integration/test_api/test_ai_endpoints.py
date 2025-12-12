@@ -4,6 +4,7 @@ from datetime import date
 
 from app.models.ingredient import IngredientCategory, UnitOfMeasurement
 from app.models.recipe import DifficultyLevel, CuisineType
+from app.models.meal import MealType
 
 
 # ===== Mock Gemini Client for Integration Tests =====
@@ -19,19 +20,36 @@ def mock_gemini_for_integration(monkeypatch):
     """Mock Gemini API for integration tests"""
     def mock_generate_content(model, contents, config):
         prompt_lower = contents.lower()
-
-        # Mock ingredient generation
-        if "ingredient" in prompt_lower:
-            return MockGeminiResponse(text=json.dumps({
-                "ingredients": [
-                    {"name": "pasta", "quantity": 400, "unit": "gram", "category": "pantry"},
-                    {"name": "tomato sauce", "quantity": 500, "unit": "gram", "category": "pantry"}
+        # Mock meal plan generation (check FIRST - most specific)
+        if "meal plan" in prompt_lower:
+            return MockGeminiResponse(text="Here's your personalized meal plan:\n\n"+json.dumps({
+                "meal_plan": [
+                    {
+                        "day": 1,
+                        "meal_type": MealType.BREAKFAST.value,
+                        "meal_name": "Eggs",
+                        "description": "Scrambled eggs",
+                        "ingredients_used": ["eggs"],
+                        "additional_ingredients_needed": [],
+                        "estimated_prep_time_minutes": 10,
+                        "estimated_calories": 200
+                    },
+                    {
+                        "day": 1,
+                        "meal_type": MealType.LUNCH.value,
+                        "meal_name": "Pasta Salad",
+                        "description": "Cold pasta",
+                        "ingredients_used": ["pasta"],
+                        "additional_ingredients_needed": ["dressing"],
+                        "estimated_prep_time_minutes": 15,
+                        "estimated_calories": 350
+                    }
                 ]
             }))
 
-        # Mock recipe generation
-        elif "recipe" in prompt_lower or "culinary expert" in prompt_lower:
-            return MockGeminiResponse(text=json.dumps({
+        # Mock recipe generation (check for "create" + "recipe")
+        elif "create" in prompt_lower and "recipe" in prompt_lower:
+            return MockGeminiResponse(text="Here's a delicious recipe for you!\n\n"+json.dumps({
                 "name": "Pasta with Tomato Sauce",
                 "description": "Simple pasta",
                 "instructions": "1. Cook pasta\\n2. Add sauce\\n3. Serve",
@@ -62,30 +80,12 @@ def mock_gemini_for_integration(monkeypatch):
                 ]
             }))
 
-        # Mock meal plan generation
-        elif "meal plan" in prompt_lower:
+        # Mock ingredient generation (check for "generate" + "ingredient")
+        elif "generate" in prompt_lower and "ingredient" in prompt_lower:
             return MockGeminiResponse(text=json.dumps({
-                "meal_plan": [
-                    {
-                        "day": 1,
-                        "meal_type": "breakfast",
-                        "meal_name": "Eggs",
-                        "description": "Scrambled eggs",
-                        "ingredients_used": ["eggs"],
-                        "additional_ingredients_needed": [],
-                        "estimated_prep_time": 10,
-                        "estimated_calories": 200
-                    },
-                    {
-                        "day": 1,
-                        "meal_type": "lunch",
-                        "meal_name": "Pasta Salad",
-                        "description": "Cold pasta",
-                        "ingredients_used": ["pasta"],
-                        "additional_ingredients_needed": ["dressing"],
-                        "estimated_prep_time": 15,
-                        "estimated_calories": 350
-                    }
+                "ingredients": [
+                    {"name": "pasta", "quantity": 400, "unit": "gram", "category": "pantry"},
+                    {"name": "tomato sauce", "quantity": 500, "unit": "gram", "category": "pantry"}
                 ]
             }))
 
@@ -239,34 +239,30 @@ class TestGenerateRecipeEndpoint:
 class TestGenerateMealPlanEndpoint:
     """Integration tests for /api/v1/ai/generate-meal-plan endpoint"""
 
-    def test_generate_meal_plan_success(self, client, auth_headers, test_household, test_ingredients, mock_gemini_for_integration):
+    def test_generate_meal_plan_success(self, client, auth_headers, db_session, test_household, test_ingredients, mock_gemini_for_integration):
         """Test successful meal plan generation"""
         # Create available ingredients via grocery list
         from app.models.grocery_list import GroceryList, GroceryListItem
-        from app.database import SessionLocal
 
-        db = SessionLocal()
-        try:
-            grocery_list = GroceryList(
-                name="Shopping",
-                household_id=test_household.id,
-                created_by_id=test_household.created_by_id
-            )
-            db.add(grocery_list)
-            db.commit()
-            db.refresh(grocery_list)
+        grocery_list = GroceryList(
+            name="Shopping",
+            household_id=test_household.id,
+            created_by_id=test_household.created_by_id
+        )
+        db_session.add(grocery_list)
+        db_session.commit()
+        db_session.refresh(grocery_list)
 
-            item = GroceryListItem(
-                grocery_list_id=grocery_list.id,
-                ingredient_id=test_ingredients[0].id,
-                quantity=100,
-                unit=UnitOfMeasurement.GRAM,
-                is_purchased=True
-            )
-            db.add(item)
-            db.commit()
-        finally:
-            db.close()
+        item = GroceryListItem(
+            grocery_list_id=grocery_list.id,
+            ingredient_id=test_ingredients[0].id,
+            name=test_ingredients[0].name,
+            quantity=100,
+            unit=UnitOfMeasurement.GRAM,
+            is_purchased=True
+        )
+        db_session.add(item)
+        db_session.commit()
 
         response = client.post(
             "/api/v1/ai/generate-meal-plan",
@@ -278,6 +274,8 @@ class TestGenerateMealPlanEndpoint:
             headers=auth_headers
         )
 
+        if response.status_code != 200:
+            print(f"Response: {response.json()}")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
@@ -285,34 +283,30 @@ class TestGenerateMealPlanEndpoint:
         assert data["data"]["total_days"] == 3
         assert len(data["data"]["meal_suggestions"]) > 0
 
-    def test_generate_meal_plan_custom_params(self, client, auth_headers, test_household, test_ingredients, mock_gemini_for_integration):
+    def test_generate_meal_plan_custom_params(self, client, auth_headers, db_session, test_household, test_ingredients, mock_gemini_for_integration):
         """Test meal plan with custom parameters"""
         # Create available ingredient
         from app.models.grocery_list import GroceryList, GroceryListItem
-        from app.database import SessionLocal
 
-        db = SessionLocal()
-        try:
-            grocery_list = GroceryList(
-                name="Items",
-                household_id=test_household.id,
-                created_by_id=test_household.created_by_id
-            )
-            db.add(grocery_list)
-            db.commit()
-            db.refresh(grocery_list)
+        grocery_list = GroceryList(
+            name="Items",
+            household_id=test_household.id,
+            created_by_id=test_household.created_by_id
+        )
+        db_session.add(grocery_list)
+        db_session.commit()
+        db_session.refresh(grocery_list)
 
-            item = GroceryListItem(
-                grocery_list_id=grocery_list.id,
-                ingredient_id=test_ingredients[0].id,
-                quantity=100,
-                unit=UnitOfMeasurement.GRAM,
-                is_purchased=True
-            )
-            db.add(item)
-            db.commit()
-        finally:
-            db.close()
+        item = GroceryListItem(
+            grocery_list_id=grocery_list.id,
+            ingredient_id=test_ingredients[0].id,
+            name=test_ingredients[0].name,
+            quantity=100,
+            unit=UnitOfMeasurement.GRAM,
+            is_purchased=True
+        )
+        db_session.add(item)
+        db_session.commit()
 
         response = client.post(
             "/api/v1/ai/generate-meal-plan",

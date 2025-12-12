@@ -460,7 +460,7 @@ JSON Schema:
       "description": "brief description",
       "ingredients_used": ["ingredient names from available list"],
       "additional_ingredients_needed": ["ingredient names not in available list"],
-      "estimated_prep_time": minutes,
+      "estimated_prep_time_minutes": minutes,
       "estimated_calories": number
     }}
   ]
@@ -549,7 +549,7 @@ note: Return ONLY valid JSON with no additional text or markdown
 
     def save_recipe_with_ingredient_creation(
         self, recipe_data: RecipeCreate, user_id: int
-    ) -> Any:
+    ) -> tuple[Any, int]:
         """
         Save recipe with auto-creation of missing ingredients.
 
@@ -564,7 +564,7 @@ note: Return ONLY valid JSON with no additional text or markdown
             user_id: User performing the action
 
         Returns:
-            Created Recipe object
+            Tuple of (Created Recipe object, count of created ingredients)
 
         Raises:
             AuthorizationException: If user not member
@@ -590,15 +590,14 @@ note: Return ONLY valid JSON with no additional text or markdown
                 ingredient_create = IngredientCreate(
                     name=recipe_ing.ingredient_name,
                     category=recipe_ing.ingredient_category or IngredientCategory.OTHER,
-                    default_unit=recipe_ing.unit,
-                    notes="Auto-created from AI recipe",
+                    description="Auto-created from AI recipe",
                     household_id=recipe_data.household_id,
                 )
 
-                created_ingredient = self.ingredient_repo.create(
-                    obj_in=ingredient_create,
-                    household_id=recipe_data.household_id
-                )
+                # Create Ingredient model instance from schema
+                from app.models.ingredient import Ingredient
+                ingredient_obj = Ingredient(**ingredient_create.model_dump())
+                created_ingredient = self.ingredient_repo.create(ingredient_obj)
 
                 # Update the recipe ingredient with the newly created ID
                 recipe_ing.ingredient_id = created_ingredient.id
@@ -613,7 +612,7 @@ note: Return ONLY valid JSON with no additional text or markdown
                 f"Auto-created {len(new_ingredients_created)} new ingredients: {', '.join(new_ingredients_created)}"
             )
 
-        return recipe
+        return recipe, len(new_ingredients_created)
 
     # ===== Helper Methods =====
 

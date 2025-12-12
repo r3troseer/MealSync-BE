@@ -116,7 +116,7 @@ async def generate_meal_plan(
     Generate meal plan suggestions from available household ingredients.
 
     - **household_id**: Target household
-    - **days**: Number of days to plan (1-30)
+    - **days**: Number of days to plan (1-7)
     - **meals_per_day**: Meals per day (1-6)
     - **start_date**: Optional start date (defaults to today)
     - **use_available_only**: Restrict to only available ingredients
@@ -180,15 +180,9 @@ async def save_recipe_with_auto_create(
     try:
         ai_service = AIService(db)
 
-        recipe = ai_service.save_recipe_with_ingredient_creation(
+        recipe, created_count = ai_service.save_recipe_with_ingredient_creation(
             recipe_data=recipe_data,
             user_id=current_user.id
-        )
-
-        # Count how many ingredients were created
-        created_count = sum(
-            1 for ing in recipe_data.ingredients
-            if ing.ingredient_id is None
         )
 
         return Result.successful(data={

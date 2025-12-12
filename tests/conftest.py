@@ -9,9 +9,13 @@ os.environ["API_V1_STR"] = "/api/v1"
 os.environ["SECRET_KEY"] = "test-secret-key-for-testing"
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 
-from app.main import app
 from app.database import get_db
 from app.models.base import Base
+# Import all models to ensure they're registered with SQLAlchemy
+from app.models import (  # noqa: F401
+    User, Household, Recipe, Meal, Ingredient, RecipeIngredient,
+    GroceryList, GroceryListItem
+)
 
 TEST_DATABASE_URL = "sqlite:///:memory:"
 
@@ -26,6 +30,10 @@ def engine():
     Base.metadata.create_all(bind=engine)
     yield engine
     Base.metadata.drop_all(bind=engine)
+
+
+# Import app AFTER engine fixture is defined
+from app.main import app  # noqa: E402
 
 
 @pytest.fixture

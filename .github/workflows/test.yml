@@ -48,8 +48,8 @@ jobs:
         DATABASE_URL: postgresql://test_user:test_pass@localhost:5432/test_db
         SECRET_KEY: test-secret-key
         API_V1_STR: /api/v1
-        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      run: python -m pytest tests/ --cov=app --junitxml=junit.xml -o junit_family=legacy -v -m "not ai"
+        GEMINI_API_KEY: dummy-key-for-mocked-tests
+      run: python -m pytest tests/ --cov=app --junitxml=junit.xml -o junit_family=legacy -v
 
     # - name: Upload coverage to Codecov
     #   uses: codecov/codecov-action@v4
@@ -68,3 +68,4 @@ jobs:
       uses: codecov/test-results-action@v1
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
+        file: ./junit.xml
