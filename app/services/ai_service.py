@@ -592,6 +592,7 @@ note: Return ONLY valid JSON with no additional text or markdown
                     category=recipe_ing.ingredient_category or IngredientCategory.OTHER,
                     default_unit=recipe_ing.unit,
                     notes="Auto-created from AI recipe",
+                    household_id=recipe_data.household_id,
                 )
 
                 created_ingredient = self.ingredient_repo.create(

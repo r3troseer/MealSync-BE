@@ -103,3 +103,71 @@ def auth_token(client, test_user):
 def auth_headers(auth_token):
     """Get authorization headers with bearer token."""
     return {"Authorization": f"Bearer {auth_token}"}
+
+
+@pytest.fixture
+def test_household(db_session, test_user):
+    """Create a test household with test_user as admin member."""
+    from app.models.household import Household
+    from app.models.associations import user_household
+    from sqlalchemy import insert
+
+    household = Household(
+        name="Test Household",
+        description="Test household for AI tests",
+        created_by_id=test_user.id,
+        invite_code="TEST123"
+    )
+    db_session.add(household)
+    db_session.commit()
+    db_session.refresh(household)
+
+    # Add test_user as admin member via association table
+    stmt = insert(user_household).values(
+        user_id=test_user.id,
+        household_id=household.id,
+        role="admin"
+    )
+    db_session.execute(stmt)
+    db_session.commit()
+
+    return household
+
+
+@pytest.fixture
+def test_ingredients(db_session, test_household):
+    """Create test ingredients in household for matching tests."""
+    from app.models.ingredient import Ingredient, IngredientCategory
+
+    ingredients = [
+        Ingredient(
+            name="pasta",
+            category=IngredientCategory.PANTRY,
+            household_id=test_household.id
+        ),
+        Ingredient(
+            name="tomato sauce",
+            category=IngredientCategory.PANTRY,
+            household_id=test_household.id
+        ),
+        Ingredient(
+            name="garlic",
+            category=IngredientCategory.PRODUCE,
+            household_id=test_household.id
+        ),
+        Ingredient(
+            name="salt",
+            category=IngredientCategory.SPICES,
+            household_id=test_household.id
+        ),
+        Ingredient(
+            name="pepper",
+            category=IngredientCategory.SPICES,
+            household_id=test_household.id
+        )
+    ]
+    for ing in ingredients:
+        db_session.add(ing)
+    db_session.commit()
+    db_session.refresh(ingredients[0])  # Ensure IDs are loaded
+    return ingredients
