@@ -461,3 +461,216 @@ class TestSaveRecipeEndpoint:
 
         # Should get validation error from Pydantic or service
         assert response.status_code in [400, 422]
+
+
+@pytest.mark.ai
+class TestSaveMealPlanEndpoint:
+    """Test POST /api/v1/ai/save-meal-plan endpoint"""
+
+    def test_save_meal_plan_success(self, client, auth_headers, test_household):
+        """Test successful meal plan save via API"""
+        from datetime import date, timedelta
+
+        response = client.post(
+            "/api/v1/ai/save-meal-plan",
+            json={
+                "household_id": test_household.id,
+                "meals": [
+                    {
+                        "meal_name": "Breakfast Omelette",
+                        "meal_type": "breakfast",
+                        "meal_date": str(date.today() + timedelta(days=1)),
+                        "description": "Fluffy eggs",
+                        "servings": 2,
+                        "ingredients_used": ["eggs"],
+                        "additional_ingredients_needed": []
+                    },
+                    {
+                        "meal_name": "Grilled Chicken",
+                        "meal_type": "lunch",
+                        "meal_date": str(date.today() + timedelta(days=1)),
+                        "servings": 4,
+                        "ingredients_used": ["chicken"],
+                        "additional_ingredients_needed": []
+                    },
+                    {
+                        "meal_name": "Pasta Dinner",
+                        "meal_type": "dinner",
+                        "meal_date": str(date.today() + timedelta(days=1)),
+                        "servings": 6,
+                        "ingredients_used": ["pasta"],
+                        "additional_ingredients_needed": []
+                    }
+                ],
+                "auto_create_ingredients": False,
+                "auto_match_recipes": False
+            },
+            headers=auth_headers
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"]["total_meals_created"] == 3
+        assert len(data["data"]["meal_ids"]) == 3
+        assert len(data["data"]["meal_uuids"]) == 3
+
+    def test_save_meal_plan_single_meal(self, client, auth_headers, test_household):
+        """Test saving just one meal from plan"""
+        from datetime import date, timedelta
+
+        response = client.post(
+            "/api/v1/ai/save-meal-plan",
+            json={
+                "household_id": test_household.id,
+                "meals": [
+                    {
+                        "meal_name": "Solo Dinner",
+                        "meal_type": "dinner",
+                        "meal_date": str(date.today() + timedelta(days=1)),
+                        "servings": 2,
+                        "ingredients_used": [],
+                        "additional_ingredients_needed": []
+                    }
+                ]
+            },
+            headers=auth_headers
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["data"]["total_meals_created"] == 1
+
+    def test_save_meal_plan_with_auto_features(self, client, auth_headers, test_household, test_recipes):
+        """Test auto-create and auto-match features"""
+        from datetime import date, timedelta
+
+        response = client.post(
+            "/api/v1/ai/save-meal-plan",
+            json={
+                "household_id": test_household.id,
+                "meals": [
+                    {
+                        "meal_name": "Spaghetti Bolognese",  # Should match recipe
+                        "meal_type": "dinner",
+                        "meal_date": str(date.today() + timedelta(days=1)),
+                        "servings": 4,
+                        "ingredients_used": ["pasta"],
+                        "additional_ingredients_needed": ["basil", "oregano"]
+                    }
+                ],
+                "auto_create_ingredients": True,
+                "auto_match_recipes": True
+            },
+            headers=auth_headers
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["data"]["total_meals_created"] == 1
+        assert data["data"]["ingredients_created"] == 2
+        assert set(data["data"]["ingredients_created_list"]) == {"basil", "oregano"}
+        assert data["data"]["recipes_matched"] == 1
+
+    def test_save_meal_plan_unauthorized(self, client, test_household):
+        """Test unauthorized access"""
+        from datetime import date, timedelta
+
+        response = client.post(
+            "/api/v1/ai/save-meal-plan",
+            json={
+                "household_id": test_household.id,
+                "meals": [
+                    {
+                        "meal_name": "Test",
+                        "meal_type": "dinner",
+                        "meal_date": str(date.today() + timedelta(days=1)),
+                        "servings": 2,
+                        "ingredients_used": [],
+                        "additional_ingredients_needed": []
+                    }
+                ]
+            }
+            # No auth headers
+        )
+
+        assert response.status_code == 401
+
+    def test_save_meal_plan_validation_error(self, client, auth_headers, test_household):
+        """Test validation errors"""
+        response = client.post(
+            "/api/v1/ai/save-meal-plan",
+            json={
+                "household_id": test_household.id,
+                "meals": []  # Empty list not allowed (min_items=1)
+            },
+            headers=auth_headers
+        )
+
+        assert response.status_code == 422
+
+    def test_save_meal_plan_non_member(self, client, db_session, test_household, test_user):
+        """Test non-member trying to save"""
+        from app.models.user import User
+        from app.models.household import Household
+        from app.models.associations import user_household
+        from app.utils.security import get_password_hash
+        from sqlalchemy import insert
+        from datetime import date, timedelta
+
+        # Create different user and household
+        other_user = User(
+            username="otheruser",
+            email="other@example.com",
+            hashed_password=get_password_hash("password"),
+            is_active=True
+        )
+        db_session.add(other_user)
+        db_session.commit()
+        db_session.refresh(other_user)
+
+        other_household = Household(
+            name="Other Household",
+            created_by_id=other_user.id,
+            invite_code="OTHER123"
+        )
+        db_session.add(other_household)
+        db_session.commit()
+        db_session.refresh(other_household)
+
+        # Add other_user to other_household
+        stmt = insert(user_household).values(
+            user_id=other_user.id,
+            household_id=other_household.id,
+            role="admin"
+        )
+        db_session.execute(stmt)
+        db_session.commit()
+
+        # Get auth token for other_user
+        login_response = client.post(
+            "/api/v1/auth/login",
+            data={"username": "otheruser", "password": "password"}
+        )
+        other_token = login_response.json()["data"]["access_token"]
+
+        # Try to save to test_household (should fail)
+        response = client.post(
+            "/api/v1/ai/save-meal-plan",
+            json={
+                "household_id": test_household.id,  # Not member of this
+                "meals": [
+                    {
+                        "meal_name": "Test",
+                        "meal_type": "dinner",
+                        "meal_date": str(date.today() + timedelta(days=1)),
+                        "servings": 2,
+                        "ingredients_used": [],
+                        "additional_ingredients_needed": []
+                    }
+                ]
+            },
+            headers={"Authorization": f"Bearer {other_token}"}
+        )
+
+        assert response.status_code == 403

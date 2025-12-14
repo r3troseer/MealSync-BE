@@ -13,7 +13,9 @@ from app.repositories.ingredient_repository import IngredientRepository
 from app.repositories.household_repository import HouseholdRepository
 from app.repositories.grocery_list_repository import GroceryListRepository
 from app.repositories.meal_repository import MealRepository
+from app.repositories.recipe_repository import RecipeRepository
 from app.services.recipe_service import RecipeService
+from app.services.meal_service import MealService
 from app.models.ingredient import IngredientCategory, UnitOfMeasurement
 from app.schemas.ai import (
     GenerateIngredientsResponse,
@@ -22,8 +24,10 @@ from app.schemas.ai import (
     GeneratedRecipeIngredient,
     GenerateMealPlanResponse,
     GeneratedMealSuggestion,
+    SaveMealPlanRequest,
 )
 from app.schemas.recipe import RecipeCreate
+from app.schemas.meal import MealCreate
 from app.core.exception import (
     BadRequestException,
     InternalServerException,
@@ -613,6 +617,130 @@ note: Return ONLY valid JSON with no additional text or markdown
             )
 
         return recipe, len(new_ingredients_created)
+
+    def save_meal_plan(
+        self,
+        meal_plan_data: SaveMealPlanRequest,
+        user_id: int
+    ) -> tuple[List[Any], dict]:
+        """
+        Save meal plan suggestions as scheduled meals.
+
+        Returns:
+            tuple: (created_meals, metadata_dict)
+                - created_meals: List of Meal objects
+                - metadata_dict: {
+                    "ingredients_created": int,
+                    "ingredients_created_list": List[str],
+                    "recipes_matched": int,
+                    "recipes_matched_details": List[dict]
+                  }
+        """
+        # 1. Authorization check
+        if not self.household_repo.is_member(meal_plan_data.household_id, user_id):
+            raise AuthorizationException(
+                "You must be a member of the household to create meals"
+            )
+
+        # 2. Auto-create ingredients if requested
+        ingredients_created = []
+        if meal_plan_data.auto_create_ingredients:
+            # Collect all unique additional ingredients needed
+            all_additional_ingredients = set()
+            for meal in meal_plan_data.meals:
+                all_additional_ingredients.update(meal.additional_ingredients_needed)
+
+            # Create each missing ingredient
+            for ingredient_name in all_additional_ingredients:
+                # Check if exists first
+                ingredient_id, confidence = self._match_ingredient_to_household(
+                    ingredient_name,
+                    meal_plan_data.household_id
+                )
+                if ingredient_id and confidence > 0.9:
+                    continue  # Already exists
+
+                # Create new ingredient
+                from app.schemas.ingredient import IngredientCreate
+                from app.models.ingredient import Ingredient
+
+                ingredient_create = IngredientCreate(
+                    name=ingredient_name,
+                    category=IngredientCategory.OTHER,  # Default
+                    household_id=meal_plan_data.household_id
+                )
+                ingredient_obj = Ingredient(**ingredient_create.model_dump())
+                created_ingredient = self.ingredient_repo.create(ingredient_obj)
+                ingredients_created.append(created_ingredient.name)
+
+        # 3. Auto-match recipes if requested
+        recipes_matched = []
+        if meal_plan_data.auto_match_recipes:
+            for meal in meal_plan_data.meals:
+                if meal.recipe_id is not None:
+                    continue  # Already has recipe
+
+                # Try to find recipe by name match
+                matched_recipe = self._match_recipe_by_name(
+                    meal.meal_name,
+                    meal_plan_data.household_id
+                )
+                if matched_recipe:
+                    meal.recipe_id = matched_recipe.id
+                    recipes_matched.append({
+                        "meal_name": meal.meal_name,
+                        "recipe_id": matched_recipe.id,
+                        "recipe_name": matched_recipe.name
+                    })
+
+        # 4. Create all meals via MealService
+        created_meals = []
+        meal_service = MealService(self.db)
+
+        for meal_data in meal_plan_data.meals:
+            # Map to MealCreate schema
+            meal_create = MealCreate(
+                household_id=meal_plan_data.household_id,
+                name=meal_data.meal_name,
+                meal_type=meal_data.meal_type,
+                meal_date=meal_data.meal_date,
+                notes=meal_data.description,
+                servings=meal_data.servings,
+                recipe_id=meal_data.recipe_id,
+                assigned_to_id=meal_data.assigned_to_id
+            )
+
+            meal = meal_service.create_meal(user_id, meal_create)
+            created_meals.append(meal)
+
+        # 5. Return meals and metadata
+        metadata = {
+            "ingredients_created": len(ingredients_created),
+            "ingredients_created_list": ingredients_created,
+            "recipes_matched": len(recipes_matched),
+            "recipes_matched_details": recipes_matched
+        }
+
+        return created_meals, metadata
+
+    def _match_recipe_by_name(self, meal_name: str, household_id: int) -> Optional[Any]:
+        """Try to find recipe by fuzzy name matching"""
+        recipe_repo = RecipeRepository(self.db)
+
+        # Get all household recipes
+        recipes = recipe_repo.get_by_household(household_id)
+
+        # Fuzzy match using difflib (similar to ingredient matching)
+        best_match = None
+        best_ratio = 0.0
+
+        for recipe in recipes:
+            ratio = SequenceMatcher(None, meal_name.lower(), recipe.name.lower()).ratio()
+            if ratio > best_ratio and ratio > 0.85:  # 85% confidence threshold
+                best_ratio = ratio
+                best_match = recipe
+
+        return best_match
 
     # ===== Helper Methods =====
 

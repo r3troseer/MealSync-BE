@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
 from datetime import date
 
@@ -164,3 +164,52 @@ class GenerateMealPlanResponse(BaseModel):
 
     ai_generated: bool = True
     requires_user_approval: bool = True
+
+
+class MealPlanMealCreate(BaseModel):
+    """Individual meal from plan to save (frontend can edit these)"""
+
+    meal_name: str = Field(..., min_length=1, max_length=200)
+    meal_type: MealType
+    meal_date: date
+    description: Optional[str] = Field(None, description="Becomes notes field")
+    servings: int = Field(default=4, ge=1, le=100)
+
+    # Optional recipe linkage
+    recipe_id: Optional[int] = Field(None, description="Manually specified or auto-matched")
+
+    # Optional user assignment
+    assigned_to_id: Optional[int] = None
+
+    # From AI generation (for auto-creation)
+    ingredients_used: List[str] = Field(default_factory=list)
+    additional_ingredients_needed: List[str] = Field(default_factory=list)
+
+    # Metadata
+    estimated_prep_time_minutes: Optional[int] = None
+    estimated_calories: Optional[int] = None
+
+    @field_validator('meal_date')
+    @classmethod
+    def validate_meal_date(cls, v: date) -> date:
+        """Validate that meal date is not in the past"""
+        if v < date.today():
+            raise ValueError('Meal date cannot be in the past')
+        return v
+
+
+class SaveMealPlanRequest(BaseModel):
+    """Request to save meal plan (can be full plan or subset edited by frontend)"""
+
+    household_id: int
+    meals: List[MealPlanMealCreate] = Field(..., min_items=1)
+
+    # Options
+    auto_create_ingredients: bool = Field(
+        default=True,
+        description="Create ingredients from additional_ingredients_needed"
+    )
+    auto_match_recipes: bool = Field(
+        default=True,
+        description="Try to match meals to existing recipes by name"
+    )

@@ -179,3 +179,39 @@ def test_ingredients(db_session, test_household):
     db_session.commit()
     db_session.refresh(ingredients[0])  # Ensure IDs are loaded
     return ingredients
+
+
+@pytest.fixture
+def test_recipes(db_session, test_household, test_ingredients):
+    """Create test recipes for matching tests"""
+    from app.models.recipe import DifficultyLevel, CuisineType
+    from app.models.ingredient import UnitOfMeasurement
+
+    recipe = Recipe(
+        name="Spaghetti Bolognese",
+        description="Classic Italian pasta",
+        instructions="1. Cook pasta\n2. Make sauce\n3. Combine",
+        prep_time_minutes=15,
+        cook_time_minutes=30,
+        servings=4,
+        difficulty=DifficultyLevel.EASY,
+        cuisine_type=CuisineType.ITALIAN,
+        household_id=test_household.id,
+        created_by_id=test_household.created_by_id,
+        is_public=False
+    )
+    db_session.add(recipe)
+    db_session.commit()
+    db_session.refresh(recipe)
+
+    # Add ingredient associations
+    pasta_ing = RecipeIngredient(
+        recipe_id=recipe.id,
+        ingredient_id=test_ingredients[0].id,  # pasta
+        quantity=400,
+        unit=UnitOfMeasurement.GRAM
+    )
+    db_session.add(pasta_ing)
+    db_session.commit()
+
+    return [recipe]

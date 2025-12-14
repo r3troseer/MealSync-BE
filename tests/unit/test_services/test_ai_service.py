@@ -1064,3 +1064,259 @@ class TestHelperMethods:
 
         assert len(available) >= 2
         assert any(ing["name"] == "pasta" for ing in available)
+
+
+@pytest.mark.ai
+class TestSaveMealPlan:
+    """Test AIService.save_meal_plan() method"""
+
+    def test_save_meal_plan_success(self, db_session, test_household, test_user):
+        """Test successful meal plan saving"""
+        from app.services.ai_service import AIService
+        from app.schemas.ai import SaveMealPlanRequest, MealPlanMealCreate
+        from app.models.meal import MealType
+        from datetime import date, timedelta
+
+        service = AIService(db_session)
+
+        # Create meal plan data with 3 meals
+        meal_plan_data = SaveMealPlanRequest(
+            household_id=test_household.id,
+            meals=[
+                MealPlanMealCreate(
+                    meal_name="Breakfast Omelette",
+                    meal_type=MealType.BREAKFAST,
+                    meal_date=date.today() + timedelta(days=1),
+                    description="Fluffy eggs with vegetables",
+                    servings=2,
+                    ingredients_used=["eggs", "milk"],
+                    additional_ingredients_needed=[]
+                ),
+                MealPlanMealCreate(
+                    meal_name="Grilled Chicken Salad",
+                    meal_type=MealType.LUNCH,
+                    meal_date=date.today() + timedelta(days=1),
+                    description="Healthy chicken salad",
+                    servings=4,
+                    ingredients_used=["chicken", "lettuce"],
+                    additional_ingredients_needed=[]
+                ),
+                MealPlanMealCreate(
+                    meal_name="Spaghetti",
+                    meal_type=MealType.DINNER,
+                    meal_date=date.today() + timedelta(days=1),
+                    description="Classic pasta dinner",
+                    servings=6,
+                    ingredients_used=["pasta", "tomato sauce"],
+                    additional_ingredients_needed=[]
+                )
+            ],
+            auto_create_ingredients=False,
+            auto_match_recipes=False
+        )
+
+        created_meals, metadata = service.save_meal_plan(meal_plan_data, test_user.id)
+
+        assert len(created_meals) == 3
+        assert created_meals[0].name == "Breakfast Omelette"
+        assert created_meals[1].name == "Grilled Chicken Salad"
+        assert created_meals[2].name == "Spaghetti"
+        assert metadata["ingredients_created"] == 0
+        assert metadata["recipes_matched"] == 0
+
+    def test_save_meal_plan_with_auto_create_ingredients(self, db_session, test_household, test_user):
+        """Test auto-creating ingredients from additional_ingredients_needed"""
+        from app.services.ai_service import AIService
+        from app.schemas.ai import SaveMealPlanRequest, MealPlanMealCreate
+        from app.models.meal import MealType
+        from datetime import date, timedelta
+
+        service = AIService(db_session)
+
+        # Create meal plan with additional ingredients needed
+        meal_plan_data = SaveMealPlanRequest(
+            household_id=test_household.id,
+            meals=[
+                MealPlanMealCreate(
+                    meal_name="Spicy Tacos",
+                    meal_type=MealType.DINNER,
+                    meal_date=date.today() + timedelta(days=1),
+                    servings=4,
+                    ingredients_used=["beef"],
+                    additional_ingredients_needed=["paprika", "cumin"]
+                ),
+                MealPlanMealCreate(
+                    meal_name="Herbed Chicken",
+                    meal_type=MealType.DINNER,
+                    meal_date=date.today() + timedelta(days=2),
+                    servings=4,
+                    ingredients_used=["chicken"],
+                    additional_ingredients_needed=["paprika", "oregano"]  # paprika repeated
+                )
+            ],
+            auto_create_ingredients=True,
+            auto_match_recipes=False
+        )
+
+        created_meals, metadata = service.save_meal_plan(meal_plan_data, test_user.id)
+
+        assert len(created_meals) == 2
+        # Paprika counted once (deduped), cumin once, oregano once = 3 total
+        assert metadata["ingredients_created"] == 3
+        assert set(metadata["ingredients_created_list"]) == {"paprika", "cumin", "oregano"}
+
+    def test_save_meal_plan_no_auto_create_ingredients(self, db_session, test_household, test_user):
+        """Test disabling auto-create ingredients"""
+        from app.services.ai_service import AIService
+        from app.schemas.ai import SaveMealPlanRequest, MealPlanMealCreate
+        from app.models.meal import MealType
+        from datetime import date, timedelta
+
+        service = AIService(db_session)
+
+        meal_plan_data = SaveMealPlanRequest(
+            household_id=test_household.id,
+            meals=[
+                MealPlanMealCreate(
+                    meal_name="Test Meal",
+                    meal_type=MealType.DINNER,
+                    meal_date=date.today() + timedelta(days=1),
+                    servings=4,
+                    ingredients_used=[],
+                    additional_ingredients_needed=["paprika", "cumin"]
+                )
+            ],
+            auto_create_ingredients=False,  # Disabled
+            auto_match_recipes=False
+        )
+
+        created_meals, metadata = service.save_meal_plan(meal_plan_data, test_user.id)
+
+        assert len(created_meals) == 1
+        assert metadata["ingredients_created"] == 0
+
+    def test_save_meal_plan_with_recipe_matching(self, db_session, test_household, test_user, test_recipes):
+        """Test auto-matching meals to existing recipes"""
+        from app.services.ai_service import AIService
+        from app.schemas.ai import SaveMealPlanRequest, MealPlanMealCreate
+        from app.models.meal import MealType
+        from datetime import date, timedelta
+
+        service = AIService(db_session)
+
+        # test_recipes fixture creates "Spaghetti Bolognese" recipe
+        meal_plan_data = SaveMealPlanRequest(
+            household_id=test_household.id,
+            meals=[
+                MealPlanMealCreate(
+                    meal_name="spaghetti bolognese",  # Different case, fuzzy match
+                    meal_type=MealType.DINNER,
+                    meal_date=date.today() + timedelta(days=1),
+                    servings=4,
+                    ingredients_used=["pasta", "beef"],
+                    additional_ingredients_needed=[]
+                )
+            ],
+            auto_create_ingredients=False,
+            auto_match_recipes=True
+        )
+
+        created_meals, metadata = service.save_meal_plan(meal_plan_data, test_user.id)
+
+        assert len(created_meals) == 1
+        assert created_meals[0].recipe_id is not None
+        assert created_meals[0].recipe_id == test_recipes[0].id
+        assert metadata["recipes_matched"] == 1
+        assert metadata["recipes_matched_details"][0]["meal_name"] == "spaghetti bolognese"
+        assert metadata["recipes_matched_details"][0]["recipe_id"] == test_recipes[0].id
+
+    def test_save_meal_plan_no_recipe_matching(self, db_session, test_household, test_user, test_recipes):
+        """Test disabling recipe matching"""
+        from app.services.ai_service import AIService
+        from app.schemas.ai import SaveMealPlanRequest, MealPlanMealCreate
+        from app.models.meal import MealType
+        from datetime import date, timedelta
+
+        service = AIService(db_session)
+
+        meal_plan_data = SaveMealPlanRequest(
+            household_id=test_household.id,
+            meals=[
+                MealPlanMealCreate(
+                    meal_name="Spaghetti Bolognese",  # Exact match exists
+                    meal_type=MealType.DINNER,
+                    meal_date=date.today() + timedelta(days=1),
+                    servings=4,
+                    ingredients_used=[],
+                    additional_ingredients_needed=[]
+                )
+            ],
+            auto_create_ingredients=False,
+            auto_match_recipes=False  # Disabled
+        )
+
+        created_meals, metadata = service.save_meal_plan(meal_plan_data, test_user.id)
+
+        assert len(created_meals) == 1
+        assert created_meals[0].recipe_id is None
+        assert metadata["recipes_matched"] == 0
+
+    def test_save_meal_plan_unauthorized(self, db_session, test_household):
+        """Test non-member cannot save meal plan"""
+        from app.services.ai_service import AIService
+        from app.schemas.ai import SaveMealPlanRequest, MealPlanMealCreate
+        from app.models.meal import MealType
+        from app.models.user import User
+        from app.utils.security import get_password_hash
+        from app.core.exception import AuthorizationException
+        from datetime import date, timedelta
+
+        # Create a different user not in household
+        other_user = User(
+            username="otheruser",
+            email="other@example.com",
+            hashed_password=get_password_hash("password123"),
+            is_active=True
+        )
+        db_session.add(other_user)
+        db_session.commit()
+        db_session.refresh(other_user)
+
+        service = AIService(db_session)
+
+        meal_plan_data = SaveMealPlanRequest(
+            household_id=test_household.id,
+            meals=[
+                MealPlanMealCreate(
+                    meal_name="Test Meal",
+                    meal_type=MealType.DINNER,
+                    meal_date=date.today() + timedelta(days=1),
+                    servings=4,
+                    ingredients_used=[],
+                    additional_ingredients_needed=[]
+                )
+            ]
+        )
+
+        with pytest.raises(AuthorizationException):
+            service.save_meal_plan(meal_plan_data, other_user.id)
+
+    def test_save_meal_plan_invalid_date(self, db_session, test_household, test_user):
+        """Test validation error for past dates"""
+        from app.schemas.ai import MealPlanMealCreate
+        from app.models.meal import MealType
+        from pydantic import ValidationError
+        from datetime import date, timedelta
+
+        # Should raise ValidationError when creating schema with past date
+        with pytest.raises(ValidationError) as exc_info:
+            MealPlanMealCreate(
+                meal_name="Past Meal",
+                meal_type=MealType.DINNER,
+                meal_date=date.today() - timedelta(days=1),  # Yesterday
+                servings=4,
+                ingredients_used=[],
+                additional_ingredients_needed=[]
+            )
+
+        assert "meal date cannot be in the past" in str(exc_info.value).lower()

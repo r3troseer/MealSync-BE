@@ -11,7 +11,8 @@ from app.schemas.ai import (
     GenerateRecipeRequest,
     GenerateRecipeResponse,
     GenerateMealPlanRequest,
-    GenerateMealPlanResponse
+    GenerateMealPlanResponse,
+    SaveMealPlanRequest
 )
 from app.schemas.recipe import RecipeCreate
 from app.services.ai_service import AIService
@@ -197,4 +198,54 @@ async def save_recipe_with_auto_create(
     except Exception as e:
         raise InternalServerException(
             message=f"Failed to save recipe: {str(e)}"
+        )
+
+
+@router.post("/save-meal-plan", response_model=Result[dict], status_code=status.HTTP_201_CREATED)
+async def save_meal_plan(
+    meal_plan_data: SaveMealPlanRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Save AI-generated meal plan as scheduled meals.
+
+    Frontend can edit meal suggestions before saving (remove unwanted meals,
+    edit names/dates/servings, add recipe IDs).
+
+    Features:
+    - Auto-creates missing ingredients from additional_ingredients_needed
+    - Auto-matches meals to existing recipes by name
+    - Atomic transaction (all-or-nothing)
+
+    Returns:
+    - total_meals_created: Number of meals created
+    - meal_ids: List of created meal IDs
+    - ingredients_created: Count of auto-created ingredients
+    - recipes_matched: Count of auto-matched recipes
+    """
+    try:
+        ai_service = AIService(db)
+
+        created_meals, metadata = ai_service.save_meal_plan(
+            meal_plan_data=meal_plan_data,
+            user_id=current_user.id
+        )
+
+        return Result.successful(data={
+            "message": f"Successfully created {len(created_meals)} meals",
+            "total_meals_created": len(created_meals),
+            "meal_ids": [meal.id for meal in created_meals],
+            "meal_uuids": [str(meal.uuid) for meal in created_meals],
+            "ingredients_created": metadata["ingredients_created"],
+            "ingredients_created_list": metadata["ingredients_created_list"],
+            "recipes_matched": metadata["recipes_matched"],
+            "recipes_matched_details": metadata["recipes_matched_details"]
+        })
+
+    except CustomException:
+        raise
+    except Exception as e:
+        raise InternalServerException(
+            message=f"Failed to save meal plan: {str(e)}"
         )
