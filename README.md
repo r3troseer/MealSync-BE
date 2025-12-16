@@ -49,8 +49,6 @@ This backend implementation focuses on:
 - **Dietary Restrictions**: AI generates recipes considering dietary preferences (passed as request parameters)
 - **Meal Retrieval**: Query meals by household, date range, and type
 
-> **Note**: Calendar view rendering and meal history visualization are **frontend features** (not yet implemented in backend beyond data retrieval endpoints).
-
 ### 📖 Recipe Management (Backend API)
 - **Custom Recipes**: Create and store recipes with ingredients, instructions, and metadata
 - **Difficulty Levels**: Categorize by difficulty (EASY, MEDIUM, HARD enums)
@@ -64,15 +62,11 @@ This backend implementation focuses on:
 - **Household-Scoped**: All ingredients tied to specific households
 - **Smart Matching**: AI-powered fuzzy matching to avoid duplicates
 
-> **Note**: Expiration date tracking is **not implemented** (listed in Future Enhancements).
-
 ### 🛒 Grocery Lists (Backend API)
 - **List Management**: Create grocery lists linked to households
 - **Category Grouping**: Items organized by ingredient category
 - **Purchase Tracking**: Mark items as purchased with `is_purchased` flag
 - **Meal Integration**: Add ingredients from meal plans to grocery lists
-
-> **Note**: Auto-generation from meal plans requires additional service layer logic (partial implementation).
 
 ### 📊 Software Engineering Practices
 
