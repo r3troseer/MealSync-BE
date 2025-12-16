@@ -125,24 +125,24 @@ This backend implementation focuses on:
 
 ```
 ┌─────────────────────────────────────────────┐
-│           API Layer (FastAPI)                │
+│           API Layer (FastAPI)               │
 │   /api/v1/{ai, auth, households, recipes,   │
-│            meals, ingredients, groceries}    │
+│            meals, ingredients, groceries}   │
 └──────────────────┬──────────────────────────┘
                    │
 ┌──────────────────▼──────────────────────────┐
-│          Service Layer (Business Logic)      │
-│   AIService, AuthService, MealService, etc.  │
+│          Service Layer (Business Logic)     │
+│   AIService, AuthService, MealService, etc. │
 └──────────────────┬──────────────────────────┘
                    │
 ┌──────────────────▼──────────────────────────┐
-│       Repository Layer (Data Access)         │
+│       Repository Layer (Data Access)        │
 │   RecipeRepo, MealRepo, IngredientRepo, etc.│
 └──────────────────┬──────────────────────────┘
                    │
 ┌──────────────────▼──────────────────────────┐
-│         Model Layer (SQLAlchemy ORM)         │
-│   User, Household, Recipe, Meal, Ingredient  │
+│         Model Layer (SQLAlchemy ORM)        │
+│   User, Household, Recipe, Meal, Ingredient │
 └─────────────────────────────────────────────┘
 ```
 
