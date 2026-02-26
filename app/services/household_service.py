@@ -72,9 +72,25 @@ class HouseholdService:
             "members": members
         }
 
-    def get_user_households(self, user_id: int) -> List[Household]:
+    def get_user_households(self, user_id: int) -> List[dict]:
         """Get all households a user belongs to."""
-        return self.household_repo.get_user_households(user_id)
+        households = self.household_repo.get_user_households(user_id)
+        result = []
+        for household in households:
+            members = self.household_repo.get_members(household.id)
+            result.append({
+                "id": household.id,
+                "uuid": household.uuid,
+                "name": household.name,
+                "description": household.description,
+                "invite_code": household.invite_code,
+                "created_by_id": household.created_by_id,
+                "created_at": household.created_at,
+                "updated_at": household.updated_at,
+                "member_count": len(members),
+                "members": members,
+            })
+        return result
 
     def get_household(self, household_id: int, user_id: int) -> Household:
         """
