@@ -41,18 +41,18 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     error_messages = []
 
     for error in errors:
-        # Build human-readable location path
-        loc = " -> ".join(str(x) for x in error["loc"])
+        # Skip 'body' prefix as it adds no useful context
+        loc_parts = [str(x) for x in error["loc"] if x != "body"]
+        loc = " -> ".join(loc_parts) if loc_parts else "request"
         msg = error["msg"]
         error_type = error.get("type", "")
 
-        # Create readable error message
         if error_type:
-            error_messages.append(f"{loc}: {msg} (type: {error_type})")
+            error_messages.append(f"• {loc}: {msg} ({error_type})")
         else:
-            error_messages.append(f"{loc}: {msg}")
+            error_messages.append(f"• {loc}: {msg}")
 
-    readable_message = "; ".join(error_messages)
+    readable_message = f"{len(error_messages)} validation error(s):\n" + "\n".join(error_messages)
 
     return JSONResponse(
         status_code=422,
